@@ -1,0 +1,12 @@
+# Build output
+bin/
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+
+# Go
+*.test
+*.out
+vendor/
