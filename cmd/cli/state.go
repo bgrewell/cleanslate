@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"text/tabwriter"
 
 	"github.com/bgrewell/stencil"
@@ -21,6 +22,12 @@ func newStateCmd() *stencil.Command {
 	cmd.PersistentFlags.String("fs-root", "",
 		"Path to a pre-mounted filesystem-root (subvol=/) view of the btrfs filesystem. Default: discover from / and mount a temp view (requires root).",
 		"")
+	cmd.PersistentFlags.String("esp", "",
+		"Path to the mounted ESP. Default: "+state.DefaultESPPath+". Used for boot-loader entry management on save/delete/switch.",
+		state.DefaultESPPath)
+	cmd.PersistentFlags.Bool("no-bls", "",
+		"Skip Boot Loader Specification entry management on save/delete. Use when operating on a non-running image without an ESP available, or when only the btrfs side should change.",
+		false)
 
 	listCmd := &stencil.Command{
 		Name:    "list",
@@ -41,7 +48,7 @@ func newStateCmd() *stencil.Command {
 
 	saveCmd := &stencil.Command{
 		Name:    "save",
-		Summary: "Snapshot a state into a new named layer.",
+		Summary: "Snapshot a state into a new named layer and add a boot-loader entry for it.",
 		Flags:   stencil.NewFlagSet(),
 		Args:    stencil.ArgSpec{Min: 1, Max: 1, Names: []string{"name"}},
 		Run: func(ctx *stencil.Context) error {
@@ -51,11 +58,21 @@ func newStateCmd() *stencil.Command {
 				return err
 			}
 			defer fs.Close()
+
 			source := ctx.Flags.String("from")
 			if err := state.Save(fs, args[0], source); err != nil {
 				return err
 			}
 			fmt.Printf("saved %q from %s\n", args[0], displaySource(source))
+
+			if !ctx.Flags.Bool("no-bls") {
+				esp := ctx.Flags.String("esp")
+				if err := state.WriteBLSEntry(esp, args[0]); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: failed to write BLS entry: %v\n", err)
+				} else {
+					fmt.Printf("added boot-loader entry testbox-%s.conf\n", args[0])
+				}
+			}
 			return nil
 		},
 	}
@@ -65,7 +82,7 @@ func newStateCmd() *stencil.Command {
 
 	deleteCmd := &stencil.Command{
 		Name:    "delete",
-		Summary: "Remove a named state. Reserved subvolumes (@base, @runtime, @hostid) cannot be deleted.",
+		Summary: "Remove a named state and its boot-loader entry. Reserved subvolumes (@base, @runtime, @hostid) cannot be deleted.",
 		Args:    stencil.ArgSpec{Min: 1, Max: 1, Names: []string{"name"}},
 		Run: func(ctx *stencil.Context) error {
 			args := ctx.Args
@@ -74,10 +91,18 @@ func newStateCmd() *stencil.Command {
 				return err
 			}
 			defer fs.Close()
+
 			if err := state.Delete(fs, args[0]); err != nil {
 				return err
 			}
 			fmt.Printf("deleted %q\n", args[0])
+
+			if !ctx.Flags.Bool("no-bls") {
+				esp := ctx.Flags.String("esp")
+				if err := state.DeleteBLSEntry(esp, args[0]); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: failed to remove BLS entry: %v\n", err)
+				}
+			}
 			return nil
 		},
 	}
@@ -97,14 +122,28 @@ func newStateCmd() *stencil.Command {
 
 	switchCmd := &stencil.Command{
 		Name:    "switch",
-		Summary: "Set the next-boot target state. NOT YET IMPLEMENTED — pending S4 (bootloader installation).",
+		Summary: "Set the next-boot target state via systemd-boot one-shot. The default boot target is unchanged.",
 		Flags:   stencil.NewFlagSet(),
 		Args:    stencil.ArgSpec{Min: 1, Max: 1, Names: []string{"name"}},
 		Run: func(ctx *stencil.Context) error {
-			return fmt.Errorf("state switch is not yet implemented; it depends on the bootloader work in S4")
+			name := ctx.Args[0]
+			entry := "testbox-" + name + ".conf"
+			cmd := exec.Command("bootctl", "set-oneshot", entry)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("bootctl set-oneshot %s: %w", entry, err)
+			}
+			fmt.Printf("next boot will be: %s\n", name)
+			if ctx.Flags.Bool("reboot") {
+				fmt.Println("rebooting...")
+				return exec.Command("systemctl", "reboot").Run()
+			}
+			fmt.Println("(reboot at your convenience to switch; pass --reboot to do it now)")
+			return nil
 		},
 	}
-	switchCmd.Flags.Bool("reboot", "r", "Reboot immediately after setting the target", false)
+	switchCmd.Flags.Bool("reboot", "r", "Reboot immediately after setting the next-boot target", false)
 
 	cmd.Sub = []*stencil.Command{listCmd, saveCmd, deleteCmd, currentCmd, switchCmd}
 	return cmd

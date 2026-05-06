@@ -18,25 +18,31 @@ Built on btrfs subvolumes and snapshots; images produced via mkosi.
 
 ## Status
 
-**S1** (image build), **S2** (initramfs hook + ephemeral guarantee), and
-**S3** (`testbox state` subcommands) are verified. `testbox build` produces
-a btrfs raw disk image with `@base` (immutable rootfs), `@hostid` (stable
-SSH identity carve-out), and the testbox CLI installed at
-`/usr/local/bin/testbox`. The image's initrd contains the testbox
-state-management hooks: booting with `rootflags=subvol=@runtime` deletes any
-previous `@runtime` and snapshots `@base` into a fresh `@runtime` before the
-kernel mounts root, so writes to `/` are wiped on next boot. Booting with
-`rootflags=subvol=@<name>` is a passthrough so named persistent layers
-survive reboots. SSH host keys auto-generate into `@hostid` on first boot
-and persist across all state switches.
+S1–S4 are implemented and verified end-to-end in qemu/OVMF. The image
+produced by `testbox build` is bootable on real UEFI hardware: it contains
+`@base` (immutable rootfs, marked btrfs read-only), `@hostid` (stable SSH
+identity carve-out), the testbox CLI at `/usr/local/bin/testbox`, an
+initramfs hook that snapshots `@base→@runtime` before root mount, and
+systemd-boot installed at the firmware fallback path with BLS entries for
+`fresh` and `base (rescue)`.
 
-`testbox state {list,save,delete,current}` work both on the running OS and
-against any btrfs filesystem with the testbox layout — point at one with
-`--fs-root <path>`. `testbox state switch` is stubbed; it lands in S4
-alongside bootloader installation.
+Runtime commands:
 
-**S4** (`testbox install` + real bootloader + state switching) is the next
-slice. See [DESIGN.md](DESIGN.md) for the full roadmap.
+- `testbox state list` — tabular dump of testbox-managed subvolumes.
+- `testbox state save <name>` — snapshot the running state into `@<name>`
+  and emit a `testbox-<name>.conf` BLS entry.
+- `testbox state delete <name>` — remove the snapshot and its BLS entry.
+- `testbox state current` — print the active state name.
+- `testbox state switch <name> [--reboot]` — set a systemd-boot one-shot
+  via `bootctl set-oneshot`. The default boot target is unchanged, so the
+  box returns to `fresh` on the boot after the switched one.
+- `testbox install <target>` — write the raw image to a block device or
+  file (dd-equivalent, with safety checks against root-device overwrites).
+
+UEFI is the primary target. BIOS boot is not currently installed by the
+build; it would re-introduce GRUB and is left for a follow-up if needed.
+
+See [DESIGN.md](DESIGN.md) for architecture and the full design rationale.
 
 ### Known limitation: no bootloader installed yet
 
@@ -74,36 +80,25 @@ sudo ./bin/testbox build           # build the OS disk image
 flat (useful when iterating on mkosi config). Output lands in
 `mkosi.output/testbox.raw`.
 
-## Verifying boot
+## Verifying boot in qemu (UEFI)
 
-Until S4 installs a real bootloader, boot via direct kernel pass-through.
-Extract the Ubuntu kernel and initrd (which contains the testbox hooks) from
-the ESP, then run qemu:
+Need OVMF on the host (`apt install ovmf qemu-system-x86`). The raw image
+is a self-contained UEFI-bootable disk:
 
 ```sh
-sudo losetup --find --show --partscan mkosi.output/testbox.raw   # records as /dev/loopN
-sudo udevadm settle
-ROOT_PARTUUID=$(sudo blkid -s PARTUUID -o value /dev/loopNp2)
-sudo mount /dev/loopNp1 /mnt/esp                                  # ESP is partition 1
-cp /mnt/esp/vmlinuz-* /tmp/vmlinuz
-cp /mnt/esp/initrd.img-* /tmp/initrd
-sudo umount /mnt/esp
-sudo losetup -d /dev/loopN
-
-# Boot fresh ephemeral state (rootflags=subvol=@runtime gets wiped on every boot).
+cp /usr/share/OVMF/OVMF_VARS_4M.fd /tmp/ovmf-vars.fd
 qemu-system-x86_64 -enable-kvm -m 2G -smp 2 \
-    -kernel /tmp/vmlinuz -initrd /tmp/initrd \
-    -append "root=PARTUUID=$ROOT_PARTUUID rootflags=subvol=@runtime console=ttyS0,115200" \
+    -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+    -drive if=pflash,format=raw,file=/tmp/ovmf-vars.fd \
     -drive file=mkosi.output/testbox.raw,format=raw,if=virtio \
+    -netdev user,id=n,hostfwd=tcp:127.0.0.1:2222-:22 \
+    -device virtio-net-pci,netdev=n \
     -nographic -serial mon:stdio -display none
 ```
 
-You should reach `localhost login:` on the serial console. The boot log will
-show `testbox: preparing fresh @runtime from @base` (local-top) and
-`testbox: mounted @hostid at /etc/ssh/host_keys` (local-bottom).
-
-Boot a named persistent state by changing `rootflags=subvol=@<name>` —
-writes there persist across reboots. Boot rescue with
-`rootflags=subvol=@base ro`.
+systemd-boot shows the menu (`fresh` / `base`), counts down 3 s, and boots
+the default (`fresh`). The box accepts SSH on the forwarded port; set up
+`mkosi.local.conf` with a `RootPassword=` or drop a public key into
+`mkosi.extra/root/.ssh/authorized_keys` first.
 
 See [DESIGN.md](DESIGN.md) for the architecture and roadmap.

@@ -6,6 +6,7 @@ import (
 	"github.com/bgrewell/stencil"
 
 	"github.com/bgrewell/testbox/internal/build"
+	"github.com/bgrewell/testbox/internal/install"
 )
 
 // Populated at build time via -ldflags (see Makefile).
@@ -42,7 +43,23 @@ func main() {
 	buildCmd.Flags.Bool("force", "f", "Pass --force to mkosi (clear prior output)", false)
 	buildCmd.Flags.Bool("skip-relayout", "", "Skip the @base/@hostid relayout step (leave rootfs flat)", false)
 
-	root.Sub = []*stencil.Command{buildCmd, newStateCmd()}
+	installCmd := &stencil.Command{
+		Name:    "install",
+		Summary: "Write the testbox raw image to a target block device or file (dd-equivalent).",
+		Flags:   stencil.NewFlagSet(),
+		Args:    stencil.ArgSpec{Min: 1, Max: 1, Names: []string{"target"}},
+		Run: func(ctx *stencil.Context) error {
+			return install.Run(install.Options{
+				ImagePath: ctx.Flags.String("image"),
+				Target:    ctx.Args[0],
+				Force:     ctx.Flags.Bool("force"),
+			})
+		},
+	}
+	installCmd.Flags.String("image", "i", "Path to the raw image to write", "mkosi.output/testbox.raw")
+	installCmd.Flags.Bool("force", "f", "Don't prompt for confirmation when writing to a block device", false)
+
+	root.Sub = []*stencil.Command{buildCmd, installCmd, newStateCmd()}
 
 	app := stencil.NewApp(
 		stencil.WithName("testbox"),
