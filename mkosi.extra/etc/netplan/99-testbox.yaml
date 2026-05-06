@@ -1,0 +1,18 @@
+# testbox default network config: DHCP on any wired interface.
+# Override by dropping a higher-numbered yaml under /etc/netplan/.
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    all-ether:
+      match:
+        name: "en*"
+      dhcp4: true
+      dhcp6: true
+      optional: true
+    all-eth:
+      match:
+        name: "eth*"
+      dhcp4: true
+      dhcp6: true
+      optional: true
