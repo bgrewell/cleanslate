@@ -18,15 +18,20 @@ Built on btrfs subvolumes and snapshots; images produced via mkosi.
 
 ## Status
 
-S1 (image build) is verified end-to-end: `testbox build` produces a btrfs raw
-disk image with `@base` and `@hostid` subvolumes laid out, `@base` set as the
-default subvolume, and Ubuntu 24.04 noble installed inside `@base`. Booting
-the produced image with `qemu -kernel <vmlinuz> -initrd <initrd> -append
-"root=PARTUUID=... rootflags=subvol=@base ..."` reaches the systemd login
-prompt cleanly.
+**S1 (image build)** and **S2 (initramfs hook + ephemeral guarantee)** are
+verified end-to-end. `testbox build` produces a btrfs raw disk image with
+`@base` (immutable rootfs), `@hostid` (stable SSH identity carve-out), and an
+Ubuntu 24.04 noble installation inside `@base` whose initrd contains the
+testbox state-management hooks. Booting the image with
+`rootflags=subvol=@runtime` triggers the local-top hook, which deletes any
+previous `@runtime` and snapshots `@base` into a fresh `@runtime` before the
+kernel mounts root — so anything written to `/` is wiped on the next reboot.
+Booting with `rootflags=subvol=@<name>` passes through unchanged so named
+persistent layers survive reboots. SSH host keys are auto-generated into
+`@hostid` on first boot and persist across all state switches.
 
-S2 (initramfs hook + bootloader integration), S3 (`testbox state` subcommands),
-and S4 (base-update workflow) are not yet implemented. See
+**S3** (`testbox state` subcommands) and **S4** (`testbox install` + real
+bootloader installation) are not yet implemented. See
 [DESIGN.md](DESIGN.md) for the full roadmap.
 
 ### Known limitation: no bootloader installed yet
@@ -67,28 +72,34 @@ flat (useful when iterating on mkosi config). Output lands in
 
 ## Verifying boot
 
-Until S2 lands, boot via direct kernel pass-through. Extract the kernel and
-initrds from the ESP, then run qemu:
+Until S4 installs a real bootloader, boot via direct kernel pass-through.
+Extract the Ubuntu kernel and initrd (which contains the testbox hooks) from
+the ESP, then run qemu:
 
 ```sh
 sudo losetup --find --show --partscan mkosi.output/testbox.raw   # records as /dev/loopN
 sudo udevadm settle
-sudo mount /dev/loopNp1 /mnt/esp                                  # ESP is partition 1
 ROOT_PARTUUID=$(sudo blkid -s PARTUUID -o value /dev/loopNp2)
-cat /mnt/esp/testbox/microcode.initrd \
-    /mnt/esp/testbox/initrd \
-    /mnt/esp/testbox/*/kernel-modules.initrd > /tmp/initrd
-cp /mnt/esp/testbox/*/vmlinuz /tmp/vmlinuz
+sudo mount /dev/loopNp1 /mnt/esp                                  # ESP is partition 1
+cp /mnt/esp/vmlinuz-* /tmp/vmlinuz
+cp /mnt/esp/initrd.img-* /tmp/initrd
 sudo umount /mnt/esp
 sudo losetup -d /dev/loopN
 
+# Boot fresh ephemeral state (rootflags=subvol=@runtime gets wiped on every boot).
 qemu-system-x86_64 -enable-kvm -m 2G -smp 2 \
     -kernel /tmp/vmlinuz -initrd /tmp/initrd \
-    -append "root=PARTUUID=$ROOT_PARTUUID rootflags=subvol=@base console=ttyS0,115200" \
+    -append "root=PARTUUID=$ROOT_PARTUUID rootflags=subvol=@runtime console=ttyS0,115200" \
     -drive file=mkosi.output/testbox.raw,format=raw,if=virtio \
     -nographic -serial mon:stdio -display none
 ```
 
-You should reach `localhost login:` on the serial console.
+You should reach `localhost login:` on the serial console. The boot log will
+show `testbox: preparing fresh @runtime from @base` (local-top) and
+`testbox: mounted @hostid at /etc/ssh/host_keys` (local-bottom).
+
+Boot a named persistent state by changing `rootflags=subvol=@<name>` —
+writes there persist across reboots. Boot rescue with
+`rootflags=subvol=@base ro`.
 
 See [DESIGN.md](DESIGN.md) for the architecture and roadmap.

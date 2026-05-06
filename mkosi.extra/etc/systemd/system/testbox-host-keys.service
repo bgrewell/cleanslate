@@ -1,0 +1,13 @@
+[Unit]
+Description=Generate testbox SSH host keys on the @hostid subvolume
+After=local-fs.target
+Before=ssh.service ssh.socket sshd.service sshd.socket
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/testbox-generate-host-keys
+
+[Install]
+WantedBy=multi-user.target

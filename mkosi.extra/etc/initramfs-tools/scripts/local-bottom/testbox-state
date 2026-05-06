@@ -1,0 +1,46 @@
+#!/bin/sh
+# testbox-state (local-bottom) — runs after the root subvolume is mounted at
+# $rootmnt, before pivot.
+#
+# Bind-mounts the @hostid subvolume at /etc/ssh/host_keys inside the new root
+# so SSH host identity stays stable across state switches. Without this each
+# named state would have its own /etc/ssh/ host keys and clients would see
+# "REMOTE HOST IDENTIFICATION HAS CHANGED" warnings every time the operator
+# switches state.
+
+PREREQ=""
+
+prereqs() {
+    echo "$PREREQ"
+}
+
+case $1 in
+    prereqs)
+        prereqs
+        exit 0
+        ;;
+esac
+
+. /scripts/functions
+
+[ -n "$ROOT" ] || exit 0
+[ -n "$rootmnt" ] || exit 0
+
+# Resolve $ROOT to a real device node (it may still be in PARTUUID=… form).
+dev=$(resolve_device "$ROOT" 2>/dev/null) || dev=
+if [ -z "$dev" ] || [ ! -b "$dev" ]; then
+    dev="$ROOT"
+fi
+
+target="$rootmnt/etc/ssh/host_keys"
+if [ ! -d "$target" ]; then
+    log_warning_msg "testbox: $target does not exist; @base was not built with the host_keys mountpoint"
+    exit 0
+fi
+
+if mount_err=$(mount -t btrfs -o subvol=@hostid "$dev" "$target" 2>&1); then
+    log_begin_msg "testbox: mounted @hostid at /etc/ssh/host_keys"
+    log_end_msg
+else
+    log_warning_msg "testbox: @hostid mount failed (dev=$dev): $mount_err"
+fi

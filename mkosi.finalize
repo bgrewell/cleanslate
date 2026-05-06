@@ -1,0 +1,25 @@
+#!/bin/sh
+# mkosi.finalize — runs OUTSIDE the build chroot, with $BUILDROOT pointing at
+# the in-progress rootfs. Bakes the testbox initramfs hooks into the kernel's
+# initrd and enables the host-key generation oneshot.
+#
+# Ubuntu's kernel postinst defers update-initramfs to a trigger that mkosi
+# never fires, so the rootfs has no /boot/initrd.img-* until we create one
+# here. We use `-c` (create) rather than `-u` (update) for the same reason.
+
+set -eu
+
+chmod 755 "$BUILDROOT/etc/initramfs-tools/scripts/local-top/testbox-state"
+chmod 755 "$BUILDROOT/etc/initramfs-tools/scripts/local-bottom/testbox-state"
+chmod 755 "$BUILDROOT/usr/local/sbin/testbox-generate-host-keys"
+
+# Pre-create the @hostid mountpoint inside the rootfs so the local-bottom
+# initramfs hook can mount it without needing to mkdir on a read-only root.
+mkdir -p "$BUILDROOT/etc/ssh/host_keys"
+chmod 755 "$BUILDROOT/etc/ssh/host_keys"
+
+mkosi-chroot update-initramfs -c -k all
+
+mkdir -p "$BUILDROOT/etc/systemd/system/multi-user.target.wants"
+ln -sf /etc/systemd/system/testbox-host-keys.service \
+    "$BUILDROOT/etc/systemd/system/multi-user.target.wants/testbox-host-keys.service"
