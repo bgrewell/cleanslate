@@ -42,7 +42,7 @@ func main() {
 	buildCmd.Flags.Bool("force", "f", "Pass --force to mkosi (clear prior output)", false)
 	buildCmd.Flags.Bool("skip-relayout", "", "Skip the @base/@hostid relayout step (leave rootfs flat)", false)
 
-	root.Sub = []*stencil.Command{buildCmd}
+	root.Sub = []*stencil.Command{buildCmd, newStateCmd()}
 
 	app := stencil.NewApp(
 		stencil.WithName("testbox"),

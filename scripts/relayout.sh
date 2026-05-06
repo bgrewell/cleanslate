@@ -15,15 +15,20 @@
 # not expose /dev/loop-control. The testbox build wrapper invokes this
 # script after mkosi succeeds.
 #
-# Usage: relayout.sh <image.raw>
+# Usage: relayout.sh <image.raw> [path-to-testbox-binary]
 # Requires root.
+#
+# If a second argument is given, it is treated as a path to the testbox CLI
+# and copied into @base/usr/local/bin/testbox so state-management commands
+# are runnable on the booted image.
 
 set -euo pipefail
 
 PROG=$(basename "$0")
 IMG="${1:-}"
+TESTBOX_BIN="${2:-}"
 if [[ -z "$IMG" ]]; then
-    echo "usage: $PROG <image.raw>" >&2
+    echo "usage: $PROG <image.raw> [path-to-testbox-binary]" >&2
     exit 64
 fi
 if [[ "$EUID" -ne 0 ]]; then
@@ -82,6 +87,15 @@ btrfs subvolume set-default "$BASE_ID" "$MNT"
 FSTAB="$MNT/@base/etc/fstab"
 if [[ -f "$FSTAB" ]]; then
     sed -i -E 's|(\s/\s+btrfs\s+)([^[:space:]]+)|\1subvol=@base|' "$FSTAB"
+fi
+
+if [[ -n "$TESTBOX_BIN" ]]; then
+    if [[ ! -f "$TESTBOX_BIN" ]]; then
+        echo "$PROG: warning: testbox binary not found at $TESTBOX_BIN; skipping install" >&2
+    else
+        install -m 755 "$TESTBOX_BIN" "$MNT/@base/usr/local/bin/testbox"
+        echo "$PROG: installed testbox binary at /usr/local/bin/testbox in @base"
+    fi
 fi
 
 echo "$PROG: created @base + @hostid; default subvolume = @base"

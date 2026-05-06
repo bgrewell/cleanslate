@@ -18,21 +18,25 @@ Built on btrfs subvolumes and snapshots; images produced via mkosi.
 
 ## Status
 
-**S1 (image build)** and **S2 (initramfs hook + ephemeral guarantee)** are
-verified end-to-end. `testbox build` produces a btrfs raw disk image with
-`@base` (immutable rootfs), `@hostid` (stable SSH identity carve-out), and an
-Ubuntu 24.04 noble installation inside `@base` whose initrd contains the
-testbox state-management hooks. Booting the image with
-`rootflags=subvol=@runtime` triggers the local-top hook, which deletes any
+**S1** (image build), **S2** (initramfs hook + ephemeral guarantee), and
+**S3** (`testbox state` subcommands) are verified. `testbox build` produces
+a btrfs raw disk image with `@base` (immutable rootfs), `@hostid` (stable
+SSH identity carve-out), and the testbox CLI installed at
+`/usr/local/bin/testbox`. The image's initrd contains the testbox
+state-management hooks: booting with `rootflags=subvol=@runtime` deletes any
 previous `@runtime` and snapshots `@base` into a fresh `@runtime` before the
-kernel mounts root — so anything written to `/` is wiped on the next reboot.
-Booting with `rootflags=subvol=@<name>` passes through unchanged so named
-persistent layers survive reboots. SSH host keys are auto-generated into
-`@hostid` on first boot and persist across all state switches.
+kernel mounts root, so writes to `/` are wiped on next boot. Booting with
+`rootflags=subvol=@<name>` is a passthrough so named persistent layers
+survive reboots. SSH host keys auto-generate into `@hostid` on first boot
+and persist across all state switches.
 
-**S3** (`testbox state` subcommands) and **S4** (`testbox install` + real
-bootloader installation) are not yet implemented. See
-[DESIGN.md](DESIGN.md) for the full roadmap.
+`testbox state {list,save,delete,current}` work both on the running OS and
+against any btrfs filesystem with the testbox layout — point at one with
+`--fs-root <path>`. `testbox state switch` is stubbed; it lands in S4
+alongside bootloader installation.
+
+**S4** (`testbox install` + real bootloader + state switching) is the next
+slice. See [DESIGN.md](DESIGN.md) for the full roadmap.
 
 ### Known limitation: no bootloader installed yet
 

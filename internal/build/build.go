@@ -88,7 +88,10 @@ func Run(opts Options) error {
 		return fmt.Errorf("relayout step needs root (loop-mounts %s); re-run testbox build under sudo, or pass --skip-relayout to leave the rootfs flat", imagePath)
 	}
 
-	relayoutCmd := exec.Command(relayout, imagePath)
+	// Pass the path to the running testbox binary so relayout can install
+	// it into @base/usr/local/bin so state commands work on the booted OS.
+	selfPath, _ := os.Executable()
+	relayoutCmd := exec.Command(relayout, imagePath, selfPath)
 	relayoutCmd.Stdout = stdout
 	relayoutCmd.Stderr = stderr
 	relayoutCmd.Env = os.Environ()
