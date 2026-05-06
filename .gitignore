@@ -1,5 +1,9 @@
 # Build output
 bin/
+mkosi.output/
+mkosi.cache/
+mkosi.builddir/
+mkosi.local.conf
 
 # Editor / IDE
 .idea/

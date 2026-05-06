@@ -18,5 +18,24 @@ Built on btrfs subvolumes and snapshots; images produced via mkosi.
 
 ## Status
 
-Early scaffolding. Image-build and layer-management commands are not yet
-implemented.
+Early. `testbox build` (S1) wraps mkosi to produce a btrfs raw disk image
+with `@base` and `@hostid` subvolumes pre-laid-out. The runtime pieces —
+initramfs hook, GRUB integration, `testbox state` subcommands — are not yet
+implemented (S2 / S3).
+
+## Building an image
+
+Requires [mkosi](https://github.com/systemd/mkosi) v26 or newer on the build
+host. On Ubuntu, install via the [openSUSE Build Service apt repo](https://software.opensuse.org/download.html?project=system:systemd&package=mkosi)
+or `pipx install git+https://github.com/systemd/mkosi.git`.
+
+```sh
+make build              # build the testbox CLI
+sudo ./bin/testbox build
+```
+
+`sudo` is required because the post-output script loop-mounts the produced
+image to lay out the `@base` / `@hostid` subvolumes. Output lands in
+`mkosi.output/testbox.raw`.
+
+See [DESIGN.md](DESIGN.md) for the architecture and roadmap.

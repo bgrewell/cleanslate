@@ -4,6 +4,8 @@ import (
 	"os"
 
 	"github.com/bgrewell/stencil"
+
+	"github.com/bgrewell/testbox/internal/build"
 )
 
 // Populated at build time via -ldflags (see Makefile).
@@ -23,6 +25,22 @@ func main() {
 	}
 	root.PersistentFlags.String("log-level", "l", "Log level", "info").Enum = []string{"info", "debug", "trace"}
 	root.PersistentFlags.Bool("quiet", "q", "Quiet output", false)
+
+	buildCmd := &stencil.Command{
+		Name:    "build",
+		Summary: "Build the base OS disk image (wraps mkosi).",
+		Flags:   stencil.NewFlagSet(),
+		Run: func(ctx *stencil.Context) error {
+			return build.Run(build.Options{
+				ConfigDir: ctx.Flags.String("config-dir"),
+				Force:     ctx.Flags.Bool("force"),
+			})
+		},
+	}
+	buildCmd.Flags.String("config-dir", "C", "Directory containing mkosi.conf", ".")
+	buildCmd.Flags.Bool("force", "f", "Pass --force to mkosi (clear prior output)", false)
+
+	root.Sub = []*stencil.Command{buildCmd}
 
 	app := stencil.NewApp(
 		stencil.WithName("testbox"),
