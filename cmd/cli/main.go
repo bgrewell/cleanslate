@@ -32,13 +32,15 @@ func main() {
 		Flags:   stencil.NewFlagSet(),
 		Run: func(ctx *stencil.Context) error {
 			return build.Run(build.Options{
-				ConfigDir: ctx.Flags.String("config-dir"),
-				Force:     ctx.Flags.Bool("force"),
+				ConfigDir:    ctx.Flags.String("config-dir"),
+				Force:        ctx.Flags.Bool("force"),
+				SkipRelayout: ctx.Flags.Bool("skip-relayout"),
 			})
 		},
 	}
 	buildCmd.Flags.String("config-dir", "C", "Directory containing mkosi.conf", ".")
 	buildCmd.Flags.Bool("force", "f", "Pass --force to mkosi (clear prior output)", false)
+	buildCmd.Flags.Bool("skip-relayout", "", "Skip the @base/@hostid relayout step (leave rootfs flat)", false)
 
 	root.Sub = []*stencil.Command{buildCmd}
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# mkosi.postoutput — runs after the raw image is produced.
+# scripts/relayout.sh — runs AFTER mkosi finishes, OUTSIDE its sandbox.
 #
-# Rearranges the flat btrfs rootfs that mkosi wrote into:
+# Rearranges the flat btrfs rootfs in a testbox raw disk image into:
 #   @base    — the immutable baked OS (current rootfs contents go here)
 #   @hostid  — empty carve-out, bind-mounted at /etc/ssh/host_keys at runtime
 #              so the box keeps a stable SSH identity across state switches
@@ -11,18 +11,27 @@
 # hook + GRUB integration) will add the cmdline plumbing for ephemeral and
 # named-state boots.
 #
-# Requires root because we loop-mount the raw image.
+# Cannot run as a mkosi PostOutputScripts hook because mkosi's sandbox does
+# not expose /dev/loop-control. The testbox build wrapper invokes this
+# script after mkosi succeeds.
+#
+# Usage: relayout.sh <image.raw>
+# Requires root.
 
 set -euo pipefail
 
+PROG=$(basename "$0")
+IMG="${1:-}"
+if [[ -z "$IMG" ]]; then
+    echo "usage: $PROG <image.raw>" >&2
+    exit 64
+fi
 if [[ "$EUID" -ne 0 ]]; then
-    echo "mkosi.postoutput: must run as root (loop-mounts the raw image)" >&2
+    echo "$PROG: must run as root (loop-mounts the raw image)" >&2
     exit 1
 fi
-
-IMG="${OUTPUTDIR}/${IMAGE_ID:-testbox}.raw"
 if [[ ! -f "$IMG" ]]; then
-    echo "mkosi.postoutput: image not found at $IMG" >&2
+    echo "$PROG: image not found at $IMG" >&2
     exit 1
 fi
 
@@ -45,7 +54,7 @@ udevadm settle 2>/dev/null || sleep 1
 # so matching on FSTYPE is unambiguous and arch-agnostic.
 ROOT_DEV=$(lsblk -no PATH,FSTYPE "$LOOP" | awk '$2=="btrfs"{print $1; exit}')
 if [[ -z "$ROOT_DEV" ]]; then
-    echo "mkosi.postoutput: no btrfs partition found on $LOOP" >&2
+    echo "$PROG: no btrfs partition found on $LOOP" >&2
     exit 1
 fi
 
@@ -75,4 +84,4 @@ if [[ -f "$FSTAB" ]]; then
     sed -i -E 's|(\s/\s+btrfs\s+)([^[:space:]]+)|\1subvol=@base|' "$FSTAB"
 fi
 
-echo "mkosi.postoutput: created @base + @hostid; default subvolume = @base"
+echo "$PROG: created @base + @hostid; default subvolume = @base"

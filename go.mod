@@ -1,6 +1,6 @@
 module github.com/bgrewell/testbox
 
-go 1.23
+go 1.22.2
 
 require github.com/bgrewell/stencil v0.0.0-20250903212403-3a522997a416
 
