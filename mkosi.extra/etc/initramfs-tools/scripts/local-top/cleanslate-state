@@ -75,9 +75,16 @@ esac
 
 # Names reach paths, so they are validated before any concatenation:
 # cleanslate.basis=@../../etc would otherwise escape the filesystem root.
+#
+# Dots are allowed because checkpoint subvolumes carry them
+# (@main.ckpt.0007.auto). Traversal is blocked by rejecting ".." and any path
+# separator outright rather than by banning the character, which would reject
+# every checkpoint as malformed.
 valid_subvol() {
     case $1 in
-        @*[!A-Za-z0-9_@-]*) return 1 ;;
+        */*)                return 1 ;;
+        *..*)               return 1 ;;
+        @*[!A-Za-z0-9_.-]*) return 1 ;;
         @?*)                return 0 ;;
         *)                  return 1 ;;
     esac

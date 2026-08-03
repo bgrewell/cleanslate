@@ -207,6 +207,40 @@ EOF
         esac
     done
 
+    # Mount the ESP explicitly rather than leaving it to
+    # systemd-gpt-auto-generator. The generator is meant to place it at /efi,
+    # but it did not on this image, and the boot entries the CLI writes are
+    # useless if nothing has the ESP mounted — save, fork and discard all
+    # silently stop managing the bootloader. Being explicit also means the
+    # dependency is visible to anyone reading the image.
+    #
+    # Addressed by PARTUUID, which is unique per image, rather than by the
+    # partition label "esp", which every other disk in a machine may also use.
+    ESP_PARTUUID=$(blkid -s PARTUUID -o value "$ESP_DEV")
+    if [[ -n "$ESP_PARTUUID" ]]; then
+        install -d "$MNT/@baseline/etc/systemd/system/local-fs.target.wants"
+        cat > "$MNT/@baseline/etc/systemd/system/efi.mount" <<EOF
+[Unit]
+Description=EFI System Partition
+Before=local-fs.target
+ConditionPathExists=/dev/disk/by-partuuid/$ESP_PARTUUID
+
+[Mount]
+What=/dev/disk/by-partuuid/$ESP_PARTUUID
+Where=/efi
+Type=vfat
+Options=umask=0077,shortname=winnt
+
+[Install]
+WantedBy=local-fs.target
+EOF
+        ln -sf /etc/systemd/system/efi.mount \
+            "$MNT/@baseline/etc/systemd/system/local-fs.target.wants/efi.mount"
+        echo "$PROG: ESP will mount at /efi (PARTUUID=$ESP_PARTUUID)"
+    else
+        echo "$PROG: warning: could not read the ESP PARTUUID; /efi will not be mounted" >&2
+    fi
+
     echo "$PROG: installed systemd-boot at /EFI/{BOOT,systemd}/ on ESP"
     echo "$PROG: wrote BLS entries: main, scratch, rescue (kver=$KVER)"
 fi
