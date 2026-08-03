@@ -82,7 +82,7 @@ func newStateCmd() *stencil.Command {
 
 	deleteCmd := &stencil.Command{
 		Name:    "delete",
-		Summary: "Remove a named state and its boot-loader entry. Reserved subvolumes (@base, @runtime, @hostid) cannot be deleted.",
+		Summary: "Remove a named state and its boot-loader entry. Reserved subvolumes (@baseline, @runtime, @hostid) cannot be deleted.",
 		Args:    stencil.ArgSpec{Min: 1, Max: 1, Names: []string{"name"}},
 		Run: func(ctx *stencil.Context) error {
 			args := ctx.Args

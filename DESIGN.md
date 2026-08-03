@@ -1,8 +1,8 @@
-# testbox — Design Document
+# cleanslate — Design Document
 
 ## Overview
 
-`testbox` is a tool for building and operating customizable Ubuntu 24.04 OS
+`cleanslate` is a tool for building and operating customizable Ubuntu 24.04 OS
 images with a layered runtime model. The system boots from an immutable base,
 exposes a transparent ephemeral writable layer, and lets the operator promote
 ephemeral state into named persistent layers that can be saved, restored, and
@@ -39,10 +39,10 @@ kernel-native btrfs CoW.
 
 | Subvolume    | Purpose                                                                                |
 |--------------|----------------------------------------------------------------------------------------|
-| `@base`      | Pristine baked OS. Mounted read-only during normal operation; writable only in base-update mode. |
-| `@runtime`   | Ephemeral working root. Recreated as a fresh snapshot of `@base` on every fresh boot. |
+| `@baseline`      | Pristine baked OS. Mounted read-only during normal operation; writable only in base-update mode. |
+| `@runtime`   | Ephemeral working root. Recreated as a fresh snapshot of `@baseline` on every fresh boot. |
 | `@hostid`    | Tiny non-rolled-back carve-out, bind-mounted at `/etc/ssh/host_keys` so the box keeps a stable SSH identity across state switches. |
-| `@<state>`   | Named persistent layer (snapshot of `@base`, or — advanced — of another `@<state>`). Survives reboots. Lives until explicitly deleted. |
+| `@<state>`   | Named persistent layer (snapshot of `@baseline`, or — advanced — of another `@<state>`). Survives reboots. Lives until explicitly deleted. |
 
 Everything else — `/etc`, `/var`, `/var/log`, `/home`, `/tmp` — lives **inside**
 the active root subvolume. Nothing persists across an ephemeral reboot unless
@@ -53,14 +53,14 @@ ephemeral reboots, and cached package downloads are not retained.
 ### Boot flow
 
 GRUB places `rootflags=subvol=<name>` on the kernel cmdline. An initramfs hook
-shipped inside `@base` reads it and acts:
+shipped inside `@baseline` reads it and acts:
 
 | GRUB entry          | initramfs action                                                | mounted root |
 |---------------------|------------------------------------------------------------------|--------------|
-| **fresh** (default) | delete `@runtime` if present; `btrfs subvolume snapshot @base @runtime` | `@runtime`   |
+| **fresh** (default) | delete `@runtime` if present; `btrfs subvolume snapshot @baseline @runtime` | `@runtime`   |
 | **gnb-xyz** etc.    | nothing                                                          | `@<state>`   |
-| **base (rescue)**   | mount read-only                                                  | `@base`      |
-| **update base**     | mount `@base` read-write under a guarded path                    | base-update  |
+| **base (rescue)**   | mount read-only                                                  | `@baseline`      |
+| **update base**     | mount `@baseline` read-write under a guarded path                    | base-update  |
 
 The cleanup of the previous `@runtime` happens at *next* boot, not at shutdown,
 so a crash, hang, or power loss still produces a clean fresh boot. The
@@ -75,7 +75,7 @@ not see "REMOTE HOST IDENTIFICATION HAS CHANGED" warnings between layers.
 ### Switching states
 
 Switching is always a reboot — the active subvolume is the one mounted as `/`,
-and you cannot replace `/` on a running system. The `testbox state switch`
+and you cannot replace `/` on a running system. The `cleanslate state switch`
 command writes a one-shot directive (`grub-reboot`) so the next boot picks the
 target state, then optionally invokes `systemctl reboot`. The default GRUB
 entry is unchanged, so an operator who switches without saving recovers to the
@@ -86,8 +86,8 @@ fallback if SSH is unavailable.
 
 Sharing is automatic. A snapshot shares every extent with its parent until
 something is overwritten, so 100 named layers each diverging slightly from
-`@base` cost roughly `@base` plus the sum of *only the changed extents*, not
-100 × `@base`. Snapshot chains (advanced) inherit the same sharing behavior.
+`@baseline` cost roughly `@baseline` plus the sum of *only the changed extents*, not
+100 × `@baseline`. Snapshot chains (advanced) inherit the same sharing behavior.
 The image is mounted with `compress=zstd`, which typically buys another 20–50%
 on OS data for negligible CPU cost. Block-level deduplication of *unrelated*
 writes (`bees`, `duperemove`) is available but not enabled by default; the CoW
@@ -96,22 +96,22 @@ sharing is sufficient for the expected workload.
 ## CLI surface
 
 ```
-testbox build [--config FILE] --out IMG       # mkosi wrapper, produces disk image
-testbox install <device|image>                 # lay down @base + GRUB on a target
+cleanslate build [--config FILE] --out IMG       # mkosi wrapper, produces disk image
+cleanslate install <device|image>                 # lay down @baseline + GRUB on a target
 
-testbox state list                             # NAME / SIZE / BASIS / LAST-BOOTED
-testbox state save <name> [--from current|@base]
-testbox state delete <name>
-testbox state switch <name> [--reboot]         # one-shot grub-reboot, default unchanged
-testbox state current                          # active state name (read at boot)
-testbox state diff <a> <b>                     # file-level diff (deferred)
-testbox state export <name> > stream.btrfs     # btrfs send (deferred)
-testbox state import < stream.btrfs            # btrfs receive (deferred)
+cleanslate state list                             # NAME / SIZE / BASIS / LAST-BOOTED
+cleanslate state save <name> [--from current|@baseline]
+cleanslate state delete <name>
+cleanslate state switch <name> [--reboot]         # one-shot grub-reboot, default unchanged
+cleanslate state current                          # active state name (read at boot)
+cleanslate state diff <a> <b>                     # file-level diff (deferred)
+cleanslate state export <name> > stream.btrfs     # btrfs send (deferred)
+cleanslate state import < stream.btrfs            # btrfs receive (deferred)
 
-testbox base update [--script FILE]            # one-shot boot into base-update mode
+cleanslate base update [--script FILE]            # one-shot boot into base-update mode
 ```
 
-At runtime, `/run/testbox/current-state` and `/run/testbox/is-ephemeral` are
+At runtime, `/run/cleanslate/current-state` and `/run/cleanslate/is-ephemeral` are
 populated by the initramfs hook so shells, prompts, and monitoring scripts can
 read them without parsing `/proc/cmdline`.
 
@@ -120,10 +120,10 @@ read them without parsing `/proc/cmdline`.
 The decisions below were made deliberately and should not be reopened without
 a concrete reason.
 
-1. **`@base` is read-only except in a dedicated update mode.** Normal `apt`
+1. **`@baseline` is read-only except in a dedicated update mode.** Normal `apt`
    operations during a session run in the active root (ephemeral or named) and
-   follow that root's lifecycle. Mutating `@base` itself is a separate,
-   intentional workflow (`testbox base update`) that boots into a guarded
+   follow that root's lifecycle. Mutating `@baseline` itself is a separate,
+   intentional workflow (`cleanslate base update`) that boots into a guarded
    mode, applies the update, and reboots.
 2. **All system trees live inside the active root subvolume.** No split-out
    `/etc` or `/var`. The simplicity is worth the loss of cross-reboot journals.
@@ -144,10 +144,10 @@ a concrete reason.
 
 | Slice | Deliverable                                                                 |
 |-------|-----------------------------------------------------------------------------|
-| **S1** | mkosi-driven base image build; `testbox build` produces a bootable raw image with `@base` and `@hostid`. |
+| **S1** | mkosi-driven base image build; `cleanslate build` produces a bootable raw image with `@baseline` and `@hostid`. |
 | **S2** | initramfs hook + GRUB integration; ephemeral guarantee verified end-to-end in qemu. |
-| **S3** | `testbox state {list,save,delete,current,switch}` subcommands.              |
-| **S4** | `testbox base update` workflow.                                             |
+| **S3** | `cleanslate state {list,save,delete,current,switch}` subcommands.              |
+| **S4** | `cleanslate base update` workflow.                                             |
 | **S5** | `state export` / `state import` and chained-state UX (deferred).            |
 
 ## Out of scope

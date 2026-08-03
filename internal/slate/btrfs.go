@@ -12,7 +12,7 @@ import (
 // Subvolume is the subset of btrfs subvolume metadata cleanslate cares about.
 type Subvolume struct {
 	ID         uint64
-	Path       string // path within the filesystem, e.g. "@base"
+	Path       string // path within the filesystem, e.g. "@baseline"
 	UUID       string
 	ParentUUID string // empty if not a snapshot
 	Generation uint64
@@ -23,7 +23,7 @@ type Subvolume struct {
 //
 // Output format (btrfs-progs 6.x):
 //
-//	ID 256 gen 18 top level 5 parent_uuid - uuid abc-... path @base
+//	ID 256 gen 18 top level 5 parent_uuid - uuid abc-... path @baseline
 func btrfsListSubvolumes(fsRoot string) ([]Subvolume, error) {
 	out, err := exec.Command("btrfs", "subvolume", "list", "-u", "-q", "-g", fsRoot).Output()
 	if err != nil {

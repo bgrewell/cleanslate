@@ -1,7 +1,7 @@
-# Makefile for testbox
+# Makefile for cleanslate
 
 BIN_DIR := bin
-BINARY := $(BIN_DIR)/testbox
+BINARY := $(BIN_DIR)/cleanslate
 
 VERSION_MAJOR := $(shell cat .stencil/version_major)
 VERSION_MINOR := $(shell cat .stencil/version_minor)

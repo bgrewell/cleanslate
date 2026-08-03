@@ -41,7 +41,7 @@ func main() {
 	}
 	buildCmd.Flags.String("config-dir", "C", "Directory containing mkosi.conf", ".")
 	buildCmd.Flags.Bool("force", "f", "Pass --force to mkosi (clear prior output)", false)
-	buildCmd.Flags.Bool("skip-relayout", "", "Skip the @base/@hostid relayout step (leave rootfs flat)", false)
+	buildCmd.Flags.Bool("skip-relayout", "", "Skip the @baseline/@hostid relayout step (leave rootfs flat)", false)
 
 	installCmd := &stencil.Command{
 		Name:    "install",

@@ -9,14 +9,14 @@ func TestParseSubvolumeLine(t *testing.T) {
 		wantOK bool
 	}{
 		{
-			line:   "ID 256 gen 18 top level 5 parent_uuid - uuid abc12345-aaaa-bbbb-cccc-111111111111 path @base",
-			want:   Subvolume{ID: 256, Generation: 18, ParentUUID: "", UUID: "abc12345-aaaa-bbbb-cccc-111111111111", Path: "@base"},
+			line:   "ID 256 gen 18 top level 5 parent_uuid - uuid abc12345-aaaa-bbbb-cccc-111111111111 path @baseline",
+			want:   Subvolume{ID: 256, Generation: 18, ParentUUID: "", UUID: "abc12345-aaaa-bbbb-cccc-111111111111", Path: "@baseline"},
 			wantOK: true,
 		},
 		{
 			// btrfs-progs aligns columns with multiple spaces.
-			line:   "ID 256 gen 31 top level 5 parent_uuid -                                    uuid cfc5c287-7fdf-e146-97cd-2285ea2be0c5 path @base",
-			want:   Subvolume{ID: 256, Generation: 31, ParentUUID: "", UUID: "cfc5c287-7fdf-e146-97cd-2285ea2be0c5", Path: "@base"},
+			line:   "ID 256 gen 31 top level 5 parent_uuid -                                    uuid cfc5c287-7fdf-e146-97cd-2285ea2be0c5 path @baseline",
+			want:   Subvolume{ID: 256, Generation: 31, ParentUUID: "", UUID: "cfc5c287-7fdf-e146-97cd-2285ea2be0c5", Path: "@baseline"},
 			wantOK: true,
 		},
 		{
@@ -56,7 +56,7 @@ func TestParseCmdlineSubvol(t *testing.T) {
 	}{
 		{cmdline: "BOOT_IMAGE=/vmlinuz root=PARTUUID=abc rootflags=subvol=@runtime console=ttyS0", want: "@runtime", wantOK: true},
 		{cmdline: "rootflags=subvol=/@gnb-xyz", want: "@gnb-xyz", wantOK: true},
-		{cmdline: "rootflags=compress=zstd,subvol=@base ro", want: "@base", wantOK: true},
+		{cmdline: "rootflags=compress=zstd,subvol=@baseline ro", want: "@baseline", wantOK: true},
 		{cmdline: "rootflags=subvol=runtime", want: "@runtime", wantOK: true},
 		{cmdline: "rootflags=compress=zstd ro", want: "", wantOK: false},
 		{cmdline: "", want: "", wantOK: false},
@@ -71,8 +71,8 @@ func TestParseCmdlineSubvol(t *testing.T) {
 
 func TestDisplayName(t *testing.T) {
 	cases := map[string]string{
-		"@base":     "base",
-		"@runtime":  "fresh",
+		"@baseline": "baseline",
+		"@runtime":  "scratch",
 		"@gnb-xyz":  "gnb-xyz",
 		"@hostid":   "hostid", // hostid is filtered before displayName but the function still maps
 		"@anything": "anything",

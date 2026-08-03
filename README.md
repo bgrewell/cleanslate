@@ -1,4 +1,4 @@
-# testbox
+# cleanslate
 
 A tool for building customizable Ubuntu 24.04 OS images with a layered runtime
 model: an immutable base, a transparent ephemeral writable layer, and optional
@@ -19,24 +19,24 @@ Built on btrfs subvolumes and snapshots; images produced via mkosi.
 ## Status
 
 S1–S4 are implemented and verified end-to-end in qemu/OVMF. The image
-produced by `testbox build` is bootable on real UEFI hardware: it contains
-`@base` (immutable rootfs, marked btrfs read-only), `@hostid` (stable SSH
-identity carve-out), the testbox CLI at `/usr/local/bin/testbox`, an
-initramfs hook that snapshots `@base→@runtime` before root mount, and
+produced by `cleanslate build` is bootable on real UEFI hardware: it contains
+`@baseline` (immutable rootfs, marked btrfs read-only), `@hostid` (stable SSH
+identity carve-out), the cleanslate CLI at `/usr/local/bin/cleanslate`, an
+initramfs hook that snapshots `@baseline→@runtime` before root mount, and
 systemd-boot installed at the firmware fallback path with BLS entries for
 `fresh` and `base (rescue)`.
 
 Runtime commands:
 
-- `testbox state list` — tabular dump of testbox-managed subvolumes.
-- `testbox state save <name>` — snapshot the running state into `@<name>`
-  and emit a `testbox-<name>.conf` BLS entry.
-- `testbox state delete <name>` — remove the snapshot and its BLS entry.
-- `testbox state current` — print the active state name.
-- `testbox state switch <name> [--reboot]` — set a systemd-boot one-shot
+- `cleanslate state list` — tabular dump of cleanslate-managed subvolumes.
+- `cleanslate state save <name>` — snapshot the running state into `@<name>`
+  and emit a `cleanslate-<name>.conf` BLS entry.
+- `cleanslate state delete <name>` — remove the snapshot and its BLS entry.
+- `cleanslate state current` — print the active state name.
+- `cleanslate state switch <name> [--reboot]` — set a systemd-boot one-shot
   via `bootctl set-oneshot`. The default boot target is unchanged, so the
   box returns to `fresh` on the boot after the switched one.
-- `testbox install <target>` — write the raw image to a block device or
+- `cleanslate install <target>` — write the raw image to a block device or
   file (dd-equivalent, with safety checks against root-device overwrites).
 
 UEFI is the primary target. BIOS boot is not currently installed by the
@@ -65,20 +65,20 @@ immediately replace. Verify S1 builds with `qemu -kernel` (see below).
   `dosfstools`, `squashfs-tools`, `bubblewrap`, `debian-archive-keyring`,
   `ovmf`, `qemu-system-x86`, `qemu-utils`. mkosi will tell you about anything
   else it needs.
-- Go 1.22+ to build the testbox CLI.
+- Go 1.22+ to build the cleanslate CLI.
 
 ## Building
 
 ```sh
-make build                         # build the testbox CLI
-sudo ./bin/testbox build           # build the OS disk image
+make build                         # build the cleanslate CLI
+sudo ./bin/cleanslate build           # build the OS disk image
 ```
 
 `sudo` is required because the post-mkosi relayout step
 (`scripts/relayout.sh`) loop-mounts the produced raw image to create the
-`@base` and `@hostid` subvolumes. Pass `--skip-relayout` to leave the rootfs
+`@baseline` and `@hostid` subvolumes. Pass `--skip-relayout` to leave the rootfs
 flat (useful when iterating on mkosi config). Output lands in
-`mkosi.output/testbox.raw`.
+`mkosi.output/cleanslate.raw`.
 
 ## Verifying boot in qemu (UEFI)
 
@@ -90,7 +90,7 @@ cp /usr/share/OVMF/OVMF_VARS_4M.fd /tmp/ovmf-vars.fd
 qemu-system-x86_64 -enable-kvm -m 2G -smp 2 \
     -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
     -drive if=pflash,format=raw,file=/tmp/ovmf-vars.fd \
-    -drive file=mkosi.output/testbox.raw,format=raw,if=virtio \
+    -drive file=mkosi.output/cleanslate.raw,format=raw,if=virtio \
     -netdev user,id=n,hostfwd=tcp:127.0.0.1:2222-:22 \
     -device virtio-net-pci,netdev=n \
     -nographic -serial mon:stdio -display none

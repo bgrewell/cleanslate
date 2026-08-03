@@ -34,14 +34,14 @@ func TestRewriteOptionsLine(t *testing.T) {
 		},
 		{
 			in:     "options  rootflags=compress=zstd,subvol=@runtime ro",
-			subvol: "@base",
-			want:   "options  rootflags=compress=zstd,subvol=@base ro",
+			subvol: "@baseline",
+			want:   "options  rootflags=compress=zstd,subvol=@baseline ro",
 		},
 		{
 			// no rootflags at all → append one
 			in:     "options  root=PARTUUID=abc ro",
-			subvol: "@base",
-			want:   "options  root=PARTUUID=abc ro rootflags=subvol=@base",
+			subvol: "@baseline",
+			want:   "options  root=PARTUUID=abc ro rootflags=subvol=@baseline",
 		},
 		{
 			// rootflags without subvol component → add subvol

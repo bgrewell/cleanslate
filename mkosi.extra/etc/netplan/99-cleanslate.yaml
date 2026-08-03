@@ -1,4 +1,4 @@
-# testbox default network config: DHCP on any wired interface.
+# cleanslate default network config: DHCP on any wired interface.
 # Override by dropping a higher-numbered yaml under /etc/netplan/.
 network:
   version: 2

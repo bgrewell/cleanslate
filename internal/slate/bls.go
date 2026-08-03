@@ -106,7 +106,7 @@ func rewriteOptionsLine(line, subvol string) string {
 // replaceSubvolToken replaces the subvol= component inside a rootflags= field
 // while leaving other rootflags components alone. e.g.
 //
-//	rootflags=compress=zstd,subvol=@runtime  →  rootflags=compress=zstd,subvol=@base
+//	rootflags=compress=zstd,subvol=@runtime  →  rootflags=compress=zstd,subvol=@baseline
 func replaceSubvolToken(rootflags, subvol string) string {
 	body := strings.TrimPrefix(rootflags, "rootflags=")
 	parts := strings.Split(body, ",")

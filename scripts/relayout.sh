@@ -1,34 +1,34 @@
 #!/usr/bin/env bash
 # scripts/relayout.sh — runs AFTER mkosi finishes, OUTSIDE its sandbox.
 #
-# Rearranges the flat btrfs rootfs in a testbox raw disk image into:
-#   @base    — the immutable baked OS (current rootfs contents go here)
+# Rearranges the flat btrfs rootfs in a cleanslate raw disk image into:
+#   @baseline    — the immutable baked OS (current rootfs contents go here)
 #   @hostid  — empty carve-out, bind-mounted at /etc/ssh/host_keys at runtime
 #              so the box keeps a stable SSH identity across state switches
 #
-# Sets @base as the default subvolume so the kernel mounts it on boot
+# Sets @baseline as the default subvolume so the kernel mounts it on boot
 # without needing rootflags=subvol= on the cmdline. The S2 work (initramfs
 # hook + GRUB integration) will add the cmdline plumbing for ephemeral and
 # named-state boots.
 #
 # Cannot run as a mkosi PostOutputScripts hook because mkosi's sandbox does
-# not expose /dev/loop-control. The testbox build wrapper invokes this
+# not expose /dev/loop-control. The cleanslate build wrapper invokes this
 # script after mkosi succeeds.
 #
-# Usage: relayout.sh <image.raw> [path-to-testbox-binary]
+# Usage: relayout.sh <image.raw> [path-to-cleanslate-binary]
 # Requires root.
 #
-# If a second argument is given, it is treated as a path to the testbox CLI
-# and copied into @base/usr/local/bin/testbox so state-management commands
+# If a second argument is given, it is treated as a path to the cleanslate CLI
+# and copied into @baseline/usr/local/bin/cleanslate so state-management commands
 # are runnable on the booted image.
 
 set -euo pipefail
 
 PROG=$(basename "$0")
 IMG="${1:-}"
-TESTBOX_BIN="${2:-}"
+CLEANSLATE_BIN="${2:-}"
 if [[ -z "$IMG" ]]; then
-    echo "usage: $PROG <image.raw> [path-to-testbox-binary]" >&2
+    echo "usage: $PROG <image.raw> [path-to-cleanslate-binary]" >&2
     exit 64
 fi
 if [[ "$EUID" -ne 0 ]]; then
@@ -65,36 +65,36 @@ fi
 
 mount -o subvol=/ "$ROOT_DEV" "$MNT"
 
-# Move the existing rootfs into @base.
-btrfs subvolume create "$MNT/@base"
+# Move the existing rootfs into @baseline.
+btrfs subvolume create "$MNT/@baseline"
 shopt -s dotglob
 for entry in "$MNT"/*; do
     case "${entry##*/}" in
-        '@base'|'@hostid') continue ;;
+        '@baseline'|'@hostid') continue ;;
     esac
-    mv "$entry" "$MNT/@base/"
+    mv "$entry" "$MNT/@baseline/"
 done
 
 # Empty carve-out for the host-identity bind mount used at runtime.
 btrfs subvolume create "$MNT/@hostid"
 
-# Make @base the default subvolume so the kernel mounts it without
+# Make @baseline the default subvolume so the kernel mounts it without
 # rootflags=subvol= on the cmdline.
-BASE_ID=$(btrfs subvolume show "$MNT/@base" | awk -F': *' '/Subvolume ID:/ {print $2; exit}')
+BASE_ID=$(btrfs subvolume show "$MNT/@baseline" | awk -F': *' '/Subvolume ID:/ {print $2; exit}')
 btrfs subvolume set-default "$BASE_ID" "$MNT"
 
-# Patch /etc/fstab inside @base so re-mounts know the subvolume.
-FSTAB="$MNT/@base/etc/fstab"
+# Patch /etc/fstab inside @baseline so re-mounts know the subvolume.
+FSTAB="$MNT/@baseline/etc/fstab"
 if [[ -f "$FSTAB" ]]; then
-    sed -i -E 's|(\s/\s+btrfs\s+)([^[:space:]]+)|\1subvol=@base|' "$FSTAB"
+    sed -i -E 's|(\s/\s+btrfs\s+)([^[:space:]]+)|\1subvol=@baseline|' "$FSTAB"
 fi
 
-if [[ -n "$TESTBOX_BIN" ]]; then
-    if [[ ! -f "$TESTBOX_BIN" ]]; then
-        echo "$PROG: warning: testbox binary not found at $TESTBOX_BIN; skipping install" >&2
+if [[ -n "$CLEANSLATE_BIN" ]]; then
+    if [[ ! -f "$CLEANSLATE_BIN" ]]; then
+        echo "$PROG: warning: cleanslate binary not found at $CLEANSLATE_BIN; skipping install" >&2
     else
-        install -m 755 "$TESTBOX_BIN" "$MNT/@base/usr/local/bin/testbox"
-        echo "$PROG: installed testbox binary at /usr/local/bin/testbox in @base"
+        install -m 755 "$CLEANSLATE_BIN" "$MNT/@baseline/usr/local/bin/cleanslate"
+        echo "$PROG: installed cleanslate binary at /usr/local/bin/cleanslate in @baseline"
     fi
 fi
 
@@ -124,9 +124,9 @@ else
     # Copy systemd-boot.efi from the rootfs to the firmware fallback path
     # and to the canonical /EFI/systemd/ path. The fallback path is what
     # firmware launches when no NVRAM entry exists (the qemu/OVMF case).
-    BOOT_EFI="$MNT/@base/usr/lib/systemd/boot/efi/systemd-bootx64.efi"
+    BOOT_EFI="$MNT/@baseline/usr/lib/systemd/boot/efi/systemd-bootx64.efi"
     if [[ ! -f "$BOOT_EFI" ]]; then
-        echo "$PROG: systemd-bootx64.efi not found in @base — install the systemd-boot package" >&2
+        echo "$PROG: systemd-bootx64.efi not found in @baseline — install the systemd-boot package" >&2
         exit 1
     fi
     install -d "$ESP_MNT/EFI/BOOT" "$ESP_MNT/EFI/systemd"
@@ -135,7 +135,7 @@ else
 
     # loader.conf — systemd-boot's top-level config.
     cat > "$ESP_MNT/loader/loader.conf" <<EOF
-default testbox-fresh.conf
+default cleanslate-fresh.conf
 timeout 3
 console-mode max
 editor no
@@ -166,7 +166,7 @@ EOF
 
     write_entry() {
         local name="$1" subvol="$2" title="$3"
-        cat > "$ESP_MNT/loader/entries/testbox-${name}.conf" <<EOF
+        cat > "$ESP_MNT/loader/entries/cleanslate-${name}.conf" <<EOF
 title    $title
 version  $KVER
 linux    /vmlinuz-$KVER
@@ -175,21 +175,21 @@ options  $BASE_OPTS rootflags=subvol=$subvol
 EOF
     }
 
-    write_entry "fresh" "@runtime"  "testbox: fresh (ephemeral)"
-    write_entry "base"  "@base"     "testbox: base (rescue, read-only)"
+    write_entry "fresh" "@runtime"  "cleanslate: fresh (ephemeral)"
+    write_entry "base"  "@baseline"     "cleanslate: base (rescue, read-only)"
 
     # Remove the default mkosi-generated BLS entry — its `options` line is
     # missing root= and we have our own entries now.
-    rm -f "$ESP_MNT"/loader/entries/testbox-*-generic.conf
+    rm -f "$ESP_MNT"/loader/entries/cleanslate-*-generic.conf
 
     echo "$PROG: installed systemd-boot at /EFI/{BOOT,systemd}/ on ESP"
-    echo "$PROG: wrote BLS entries: testbox-fresh, testbox-base (kver=$KVER)"
+    echo "$PROG: wrote BLS entries: cleanslate-fresh, cleanslate-base (kver=$KVER)"
 fi
 
-# Mark @base as read-only at the btrfs level — done LAST, after all writes
-# to @base (testbox binary install, fstab edit). Snapshot-from-readonly is
-# allowed (so the local-top hook still creates @runtime from @base), but
-# direct boots into @base — the rescue path — are inherently immutable.
-btrfs property set "$MNT/@base" ro true
+# Mark @baseline as read-only at the btrfs level — done LAST, after all writes
+# to @baseline (cleanslate binary install, fstab edit). Snapshot-from-readonly is
+# allowed (so the local-top hook still creates @runtime from @baseline), but
+# direct boots into @baseline — the rescue path — are inherently immutable.
+btrfs property set "$MNT/@baseline" ro true
 
-echo "$PROG: created @base + @hostid; default subvolume = @base; @base sealed read-only"
+echo "$PROG: created @baseline + @hostid; default subvolume = @baseline; @baseline sealed read-only"

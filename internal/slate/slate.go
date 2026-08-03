@@ -1,7 +1,7 @@
 // Package state implements the cleanslate state-management commands: list,
 // save, delete, current. Slate is modelled directly on btrfs subvolumes:
 //
-//   - @base    — the immutable baked OS (reserved)
+//   - @baseline    — the immutable baked OS (reserved)
 //   - @runtime — ephemeral working root, recreated each fresh boot (reserved)
 //   - @hostid  — stable SSH identity carve-out (reserved, hidden from list)
 //   - @<name>  — named persistent layers, freely created and deleted
@@ -21,27 +21,27 @@ import (
 )
 
 const (
-	BaseSubvol    = "@base"
-	RuntimeSubvol = "@runtime"
-	HostidSubvol  = "@hostid"
+	BaselineSubvol = "@baseline"
+	RuntimeSubvol  = "@runtime"
+	HostidSubvol   = "@hostid"
 )
 
 // reservedSubvols are subvolumes managed by the runtime infrastructure;
 // they cannot be created or deleted via `cleanslate state`.
 var reservedSubvols = map[string]bool{
-	BaseSubvol:    true,
-	RuntimeSubvol: true,
-	HostidSubvol:  true,
+	BaselineSubvol: true,
+	RuntimeSubvol:  true,
+	HostidSubvol:   true,
 }
 
 // Slate is a user-facing view of one btrfs subvolume.
 type Slate struct {
-	Name       string // user-facing name ("base", "fresh", "gnb-xyz")
+	Name       string // user-facing name ("baseline", "scratch", "pg-tuned")
 	Subvolume  string // on-disk subvolume name (always begins with @)
 	UUID       string
 	ParentUUID string // empty if not a snapshot
 	Generation uint64
-	Reserved   bool // true for @base, @runtime, @hostid
+	Reserved   bool // true for @baseline, @runtime, @hostid
 }
 
 // List returns all cleanslate-managed subvolumes on the given fs-root mount.
@@ -78,13 +78,13 @@ func List(fs *FsRoot) ([]Slate, error) {
 }
 
 // displayName converts an on-disk subvolume name to its user-facing form.
-// @base → "base", @runtime → "fresh", @gnb-xyz → "gnb-xyz".
+// @baseline → "baseline", @runtime → "scratch", @pg-tuned → "pg-tuned".
 func displayName(subvol string) string {
 	switch subvol {
-	case BaseSubvol:
-		return "base"
+	case BaselineSubvol:
+		return "baseline"
 	case RuntimeSubvol:
-		return "fresh"
+		return "scratch"
 	}
 	return strings.TrimPrefix(subvol, "@")
 }
@@ -92,7 +92,7 @@ func displayName(subvol string) string {
 var validNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // Save snapshots source into a new named state. Source may be the user-
-// facing name of an existing state ("fresh", "base", "gnb-xyz") or "current"
+// facing name of an existing slate ("scratch", "baseline", "pg-tuned") or "current"
 // to use the running active subvolume. Reserved names cannot be used as the
 // destination.
 func Save(fs *FsRoot, name, source string) error {
@@ -102,7 +102,7 @@ func Save(fs *FsRoot, name, source string) error {
 	if !validNamePattern.MatchString(name) {
 		return fmt.Errorf("invalid state name %q: only letters, digits, '-', and '_' are allowed", name)
 	}
-	if reservedSubvols["@"+name] || name == "base" || name == "fresh" {
+	if reservedSubvols["@"+name] || name == "baseline" || name == "scratch" {
 		return fmt.Errorf("name %q is reserved", name)
 	}
 
@@ -126,10 +126,10 @@ func resolveSource(fs *FsRoot, source string) (string, error) {
 		return resolveCurrentSubvolume(fs)
 	}
 	switch source {
-	case "fresh":
+	case "scratch":
 		return RuntimeSubvol, nil
-	case "base":
-		return BaseSubvol, nil
+	case "baseline":
+		return BaselineSubvol, nil
 	}
 	return "@" + strings.TrimPrefix(source, "@"), nil
 }

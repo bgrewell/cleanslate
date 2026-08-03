@@ -2,7 +2,7 @@
 //
 // The package is a thin orchestrator: it validates the config directory and
 // the mkosi installation, runs mkosi to produce a flat btrfs raw disk image,
-// and then runs scripts/relayout.sh to rearrange the rootfs into @base and
+// and then runs scripts/relayout.sh to rearrange the rootfs into @baseline and
 // @hostid subvolumes. The relayout step needs root (loop-mounting) and
 // cannot run inside mkosi's sandbox, so it lives outside the mkosi build.
 package build
@@ -24,7 +24,7 @@ type Options struct {
 	// Force passes --force to mkosi, clearing prior outputs before building.
 	Force bool
 
-	// SkipRelayout, when true, leaves the rootfs flat (no @base / @hostid).
+	// SkipRelayout, when true, leaves the rootfs flat (no @baseline / @hostid).
 	// Useful for debugging mkosi output or bypassing the root-required step.
 	SkipRelayout bool
 
@@ -89,7 +89,7 @@ func Run(opts Options) error {
 	}
 
 	// Pass the path to the running cleanslate binary so relayout can install
-	// it into @base/usr/local/bin so state commands work on the booted OS.
+	// it into @baseline/usr/local/bin so state commands work on the booted OS.
 	selfPath, _ := os.Executable()
 	relayoutCmd := exec.Command(relayout, imagePath, selfPath)
 	relayoutCmd.Stdout = stdout
