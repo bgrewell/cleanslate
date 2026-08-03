@@ -1,4 +1,4 @@
-package state
+package slate
 
 import (
 	"bufio"
@@ -26,7 +26,7 @@ func MountFsRoot() (*FsRoot, error) {
 		return nil, err
 	}
 
-	tmp, err := os.MkdirTemp("", "testbox-fsroot-*")
+	tmp, err := os.MkdirTemp("", "cleanslate-fsroot-*")
 	if err != nil {
 		return nil, fmt.Errorf("mkdir temp: %w", err)
 	}

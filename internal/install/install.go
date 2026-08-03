@@ -1,4 +1,4 @@
-// Package install writes the testbox raw disk image to a target. The target
+// Package install writes the cleanslate raw disk image to a target. The target
 // can be a block device (the normal case for deploying to real hardware) or
 // a regular file (for chained image production). The implementation shells
 // out to dd because it gives us free progress reporting and direct-IO
@@ -18,7 +18,7 @@ import (
 
 // Options configures a single install run.
 type Options struct {
-	// ImagePath is the source raw image. Defaults to ./mkosi.output/testbox.raw.
+	// ImagePath is the source raw image. Defaults to ./mkosi.output/cleanslate.raw.
 	ImagePath string
 	// Target is the destination — a block device path or a regular file path.
 	Target string
@@ -37,7 +37,7 @@ func Run(opts Options) error {
 		return errors.New("target is required")
 	}
 	if opts.ImagePath == "" {
-		opts.ImagePath = filepath.Join("mkosi.output", "testbox.raw")
+		opts.ImagePath = filepath.Join("mkosi.output", "cleanslate.raw")
 	}
 	if opts.Stdin == nil {
 		opts.Stdin = os.Stdin

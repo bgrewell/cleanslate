@@ -1,4 +1,4 @@
-// Package build wraps mkosi to produce testbox base disk images.
+// Package build wraps mkosi to produce cleanslate base disk images.
 //
 // The package is a thin orchestrator: it validates the config directory and
 // the mkosi installation, runs mkosi to produce a flat btrfs raw disk image,
@@ -33,7 +33,7 @@ type Options struct {
 	Stderr io.Writer
 }
 
-// Run produces a testbox base disk image using the given options.
+// Run produces a cleanslate base disk image using the given options.
 func Run(opts Options) error {
 	dir := opts.ConfigDir
 	if dir == "" {
@@ -79,16 +79,16 @@ func Run(opts Options) error {
 	if _, err := os.Stat(relayout); err != nil {
 		return fmt.Errorf("relayout script not found at %s: %w", relayout, err)
 	}
-	imagePath := filepath.Join(dir, "mkosi.output", "testbox.raw")
+	imagePath := filepath.Join(dir, "mkosi.output", "cleanslate.raw")
 	if _, err := os.Stat(imagePath); err != nil {
 		return fmt.Errorf("expected mkosi output at %s: %w", imagePath, err)
 	}
 
 	if os.Geteuid() != 0 {
-		return fmt.Errorf("relayout step needs root (loop-mounts %s); re-run testbox build under sudo, or pass --skip-relayout to leave the rootfs flat", imagePath)
+		return fmt.Errorf("relayout step needs root (loop-mounts %s); re-run cleanslate build under sudo, or pass --skip-relayout to leave the rootfs flat", imagePath)
 	}
 
-	// Pass the path to the running testbox binary so relayout can install
+	// Pass the path to the running cleanslate binary so relayout can install
 	// it into @base/usr/local/bin so state commands work on the booted OS.
 	selfPath, _ := os.Executable()
 	relayoutCmd := exec.Command(relayout, imagePath, selfPath)

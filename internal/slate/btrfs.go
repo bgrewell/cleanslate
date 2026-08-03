@@ -1,4 +1,4 @@
-package state
+package slate
 
 import (
 	"bufio"
@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// Subvolume is the subset of btrfs subvolume metadata testbox cares about.
+// Subvolume is the subset of btrfs subvolume metadata cleanslate cares about.
 type Subvolume struct {
 	ID         uint64
 	Path       string // path within the filesystem, e.g. "@base"

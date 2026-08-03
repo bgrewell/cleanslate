@@ -1,12 +1,12 @@
-package state
+package slate
 
 import "testing"
 
 func TestParseSubvolumeLine(t *testing.T) {
 	cases := []struct {
-		line    string
-		want    Subvolume
-		wantOK  bool
+		line   string
+		want   Subvolume
+		wantOK bool
 	}{
 		{
 			line:   "ID 256 gen 18 top level 5 parent_uuid - uuid abc12345-aaaa-bbbb-cccc-111111111111 path @base",

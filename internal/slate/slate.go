@@ -1,5 +1,5 @@
-// Package state implements the testbox state-management commands: list,
-// save, delete, current. State is modelled directly on btrfs subvolumes:
+// Package state implements the cleanslate state-management commands: list,
+// save, delete, current. Slate is modelled directly on btrfs subvolumes:
 //
 //   - @base    — the immutable baked OS (reserved)
 //   - @runtime — ephemeral working root, recreated each fresh boot (reserved)
@@ -10,7 +10,7 @@
 // represented by an FsRoot. Most callers should use MountFsRoot, which
 // resolves the device backing / and mounts a temp view; tests and the
 // --fs-root flag can use FsRootAt against a pre-existing mount.
-package state
+package slate
 
 import (
 	"fmt"
@@ -27,15 +27,15 @@ const (
 )
 
 // reservedSubvols are subvolumes managed by the runtime infrastructure;
-// they cannot be created or deleted via `testbox state`.
+// they cannot be created or deleted via `cleanslate state`.
 var reservedSubvols = map[string]bool{
 	BaseSubvol:    true,
 	RuntimeSubvol: true,
 	HostidSubvol:  true,
 }
 
-// State is a user-facing view of one btrfs subvolume.
-type State struct {
+// Slate is a user-facing view of one btrfs subvolume.
+type Slate struct {
 	Name       string // user-facing name ("base", "fresh", "gnb-xyz")
 	Subvolume  string // on-disk subvolume name (always begins with @)
 	UUID       string
@@ -44,9 +44,9 @@ type State struct {
 	Reserved   bool // true for @base, @runtime, @hostid
 }
 
-// List returns all testbox-managed subvolumes on the given fs-root mount.
+// List returns all cleanslate-managed subvolumes on the given fs-root mount.
 // The @hostid subvolume is filtered out — it is infrastructure, not state.
-func List(fs *FsRoot) ([]State, error) {
+func List(fs *FsRoot) ([]Slate, error) {
 	subvols, err := btrfsListSubvolumes(fs.Path)
 	if err != nil {
 		return nil, err
@@ -57,7 +57,7 @@ func List(fs *FsRoot) ([]State, error) {
 		uuidToName[s.UUID] = s.Path
 	}
 
-	var out []State
+	var out []Slate
 	for _, s := range subvols {
 		if !strings.HasPrefix(s.Path, "@") {
 			continue
@@ -65,7 +65,7 @@ func List(fs *FsRoot) ([]State, error) {
 		if s.Path == HostidSubvol {
 			continue
 		}
-		out = append(out, State{
+		out = append(out, Slate{
 			Name:       displayName(s.Path),
 			Subvolume:  s.Path,
 			UUID:       s.UUID,
@@ -137,7 +137,7 @@ func resolveSource(fs *FsRoot, source string) (string, error) {
 func resolveCurrentSubvolume(fs *FsRoot) (string, error) {
 	subvol, err := currentSubvolFromCmdline()
 	if err != nil {
-		// Not running on a testbox; fall back to @runtime so `state save`
+		// Not running on a cleanslate; fall back to @runtime so `state save`
 		// from the build host operates on the ephemeral working root.
 		return RuntimeSubvol, nil
 	}
@@ -162,7 +162,7 @@ func Delete(fs *FsRoot, name string) error {
 
 // Current returns the user-facing name of the currently-active state by
 // parsing /proc/cmdline for rootflags=subvol=. Returns an error if no such
-// flag is present (e.g. not running on a testbox).
+// flag is present (e.g. not running on a cleanslate).
 func Current() (string, error) {
 	subvol, err := currentSubvolFromCmdline()
 	if err != nil {

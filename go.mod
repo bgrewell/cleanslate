@@ -1,4 +1,4 @@
-module github.com/bgrewell/testbox
+module github.com/bgrewell/cleanslate
 
 go 1.22.2
 

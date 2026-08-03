@@ -5,8 +5,8 @@ import (
 
 	"github.com/bgrewell/stencil"
 
-	"github.com/bgrewell/testbox/internal/build"
-	"github.com/bgrewell/testbox/internal/install"
+	"github.com/bgrewell/cleanslate/internal/build"
+	"github.com/bgrewell/cleanslate/internal/install"
 )
 
 // Populated at build time via -ldflags (see Makefile).
@@ -19,7 +19,7 @@ var (
 
 func main() {
 	root := &stencil.Command{
-		Name:            "testbox",
+		Name:            "cleanslate",
 		Summary:         "Build customizable Ubuntu 24.04 OS images with ephemeral and named persistent layers.",
 		PersistentFlags: stencil.NewFlagSet(),
 		Flags:           stencil.NewFlagSet(),
@@ -45,7 +45,7 @@ func main() {
 
 	installCmd := &stencil.Command{
 		Name:    "install",
-		Summary: "Write the testbox raw image to a target block device or file (dd-equivalent).",
+		Summary: "Write the cleanslate raw image to a target block device or file (dd-equivalent).",
 		Flags:   stencil.NewFlagSet(),
 		Args:    stencil.ArgSpec{Min: 1, Max: 1, Names: []string{"target"}},
 		Run: func(ctx *stencil.Context) error {
@@ -56,13 +56,13 @@ func main() {
 			})
 		},
 	}
-	installCmd.Flags.String("image", "i", "Path to the raw image to write", "mkosi.output/testbox.raw")
+	installCmd.Flags.String("image", "i", "Path to the raw image to write", "mkosi.output/cleanslate.raw")
 	installCmd.Flags.Bool("force", "f", "Don't prompt for confirmation when writing to a block device", false)
 
 	root.Sub = []*stencil.Command{buildCmd, installCmd, newStateCmd()}
 
 	app := stencil.NewApp(
-		stencil.WithName("testbox"),
+		stencil.WithName("cleanslate"),
 		stencil.WithDescription("Build customizable Ubuntu 24.04 OS images with ephemeral and named persistent layers."),
 		stencil.WithVersionInfo(stencil.VersionInfo{
 			Version:    appVersion,
