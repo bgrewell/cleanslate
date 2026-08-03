@@ -106,6 +106,17 @@ A useful test: **if you can't write down what's in a slate, it isn't ready to
 be forked.** Prefer `v1` → `v2` over editing a good slate in place — the
 working one keeps working while you build the next.
 
+### One thing checkpoints cannot capture
+
+If something on a slate creates its own filesystem inside it — a container
+runtime configured to do so, or a manually created btrfs subvolume — a
+checkpoint cannot capture what is inside it, and rolling back would leave it
+empty. `cleanslate status` warns while this is true, `list` marks the slate,
+and `checkpoint` refuses unless you pass `--allow-incomplete`.
+
+Data that needs to survive a rollback belongs on the slate itself or on a
+separate disk, not in a filesystem nested inside the slate.
+
 ## The boot menu
 
 Three entries, plus one per slate:

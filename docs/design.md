@@ -142,11 +142,53 @@ baseline plus the changed extents, not a hundred times the baseline. The same
 applies to checkpoints: the cost of keeping one is the data only it still
 references. The filesystem is mounted with `compress=zstd`.
 
+## Nested subvolumes
+
+A btrfs snapshot does not descend into subvolumes nested inside the tree it
+captures: they appear in the snapshot as empty directories. A checkpoint of a
+slate containing them therefore looks complete, rolls back cleanly, and has
+silently lost whatever was inside. Since rollback is the safety mechanism the
+whole model rests on, a checkpoint that quietly omits data is worse than no
+checkpoint, because it is trusted.
+
+Capturing them was considered and rejected. It would mean snapshotting each
+nested subvolume alongside the checkpoint, recording a manifest, and
+reassembling on rollback. The common trigger is a container runtime on the
+btrfs storage driver, which creates one subvolume per image layer — often
+hundreds — so this would mean hundreds of snapshots per boot, taken in the
+initramfs, multiplied by the retention count, and a rollback that is no longer
+a single rename. The cost lands on every boot of every machine to serve a case
+that can be avoided outright.
+
+What is done instead:
+
+1. **Remove the common cause.** The baseline ships
+   `/etc/docker/daemon.json` selecting the `overlay2` storage driver. Docker
+   otherwise auto-selects the btrfs driver on a btrfs root; overlay2 creates no
+   subvolumes and is fully supported on btrfs. The file is inert if Docker is
+   never installed.
+2. **Make the rest impossible to miss.** `cleanslate checkpoint` refuses and
+   names the paths unless `--allow-incomplete` is passed; `cleanslate status`
+   warns on every invocation while a slate contains them; `cleanslate list`
+   marks affected slates; and the initramfs hook logs a warning each time it
+   takes an automatic checkpoint of one.
+
+Automatic checkpoints are never refused — a slate that cannot be captured
+completely is still better off with an incomplete rollback point than with
+none, provided the incompleteness is visible, which it is in three places.
+
+Note the asymmetry with deletion, which *does* handle nesting via
+`btrfs subvolume delete -R` with a depth-first fallback. Removing a slate is
+complete; capturing one is not.
+
+For workloads that genuinely need their own subvolume, the honest answer is a
+separate filesystem, which cleanslate does not checkpoint and therefore cannot
+half-capture. That is also the likely recommendation for CoW-hostile workloads
+generally — see the issue tracker on `nodatacow` interacting with per-boot
+checkpoints.
+
 ## Known gaps
 
-- Snapshots do not capture nested subvolumes, so a checkpoint of a slate using
-  Docker's btrfs storage driver will not include the container data. Deletion
-  handles nesting (`delete -R`, with a depth-first fallback); capture does not.
 - `/etc/ssh/host_keys` is a mount point over `@hostid`, so checkpoints contain
   an empty directory there. This is intended.
 - Baseline updates, slate export/import, and a file-level diff between slates

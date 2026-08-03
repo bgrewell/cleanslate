@@ -35,7 +35,7 @@ func TestStatusPersistent(t *testing.T) {
 		Checkpoint: "@pg-tuned.ckpt.0007.auto",
 		BootedAt:   time.Now().UTC().Add(-3 * time.Hour),
 	}
-	if err := printStatus(&buf, b, nil); err != nil {
+	if err := printStatus(&buf, b, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	got := buf.String()
@@ -55,7 +55,7 @@ func TestStatusPersistent(t *testing.T) {
 func TestStatusScratchWarnsAboutLoss(t *testing.T) {
 	var buf bytes.Buffer
 	b := slate.Booted{Name: "baseline", Mode: slate.ModeScratch, Basis: "@baseline"}
-	if err := printStatus(&buf, b, nil); err != nil {
+	if err := printStatus(&buf, b, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	got := buf.String()
@@ -74,7 +74,7 @@ func TestStatusReportsFallbackAndPending(t *testing.T) {
 		Basis: "@baseline", Requested: "@gone",
 	}
 	p := slate.Pending{Slate: "@main", Source: "@main.ckpt.0003.keep", Reason: "rollback to checkpoint main.3"}
-	if err := printStatus(&buf, b, &p); err != nil {
+	if err := printStatus(&buf, b, &p, nil); err != nil {
 		t.Fatal(err)
 	}
 	got := buf.String()
@@ -100,7 +100,7 @@ func TestListSlates(t *testing.T) {
 	}
 	booted := slate.Booted{Name: "main", Basis: "@main", Mode: slate.ModePersistent}
 
-	if err := printSlates(&buf, slates, checkpoints, booted); err != nil {
+	if err := printSlates(&buf, slates, checkpoints, booted, nil); err != nil {
 		t.Fatal(err)
 	}
 	got := buf.String()
@@ -159,5 +159,46 @@ func TestHumanDuration(t *testing.T) {
 		if got := humanDuration(d); got != want {
 			t.Errorf("humanDuration(%s) = %q, want %q", d, got, want)
 		}
+	}
+}
+
+// A checkpoint of a slate containing nested subvolumes looks complete and is
+// not, and the consequence only appears at rollback — by which point the data
+// is gone. Both surfaces have to say so before then.
+func TestStatusWarnsAboutUncapturedData(t *testing.T) {
+	var buf bytes.Buffer
+	b := slate.Booted{Name: "main", Mode: slate.ModePersistent, Basis: "@main"}
+	nested := []string{"srv/data", "var/lib/docker/btrfs/subvolumes/a1b2c3"}
+	if err := printStatus(&buf, b, nil, nested); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+
+	for _, want := range []string{"not captured", "empty after a rollback", "srv/data"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+func TestListFlagsUncapturedData(t *testing.T) {
+	var buf bytes.Buffer
+	slates := []slate.Slate{{Name: "main", Subvolume: "@main", UUID: "u-main"}}
+	if err := printSlates(&buf, slates, nil, slate.Booted{}, map[string]int{"main": 3}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "3 uncaptured") {
+		t.Errorf("list does not flag uncaptured data:\n%s", buf.String())
+	}
+}
+
+func TestListDoesNotFlagCleanSlates(t *testing.T) {
+	var buf bytes.Buffer
+	slates := []slate.Slate{{Name: "main", Subvolume: "@main", UUID: "u-main"}}
+	if err := printSlates(&buf, slates, nil, slate.Booted{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "uncaptured") {
+		t.Errorf("a slate with nothing nested should not be flagged:\n%s", buf.String())
 	}
 }
