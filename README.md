@@ -117,6 +117,23 @@ and `checkpoint` refuses unless you pass `--allow-incomplete`.
 Data that needs to survive a rollback belongs on the slate itself or on a
 separate disk, not in a filesystem nested inside the slate.
 
+### Databases and other heavy-write workloads
+
+The same advice, for a different reason. Slates live on a copy-on-write
+filesystem, which is slow for the random rewrites a database does, and the
+usual fix — marking the data directory no-copy-on-write — **does not work on a
+slate**, because the checkpoint taken at every boot forces the copying anyway.
+Measured, a database ends up at about a quarter of the speed it would reach
+otherwise, and stays there.
+
+If a machine exists to run something like that, put its data on a separate
+disk. Benchmarks are worth a second thought too: numbers taken on a slate
+partly measure the filesystem underneath.
+
+See [docs/design.md](docs/design.md) for the measurements and for how to turn
+the per-boot checkpoint off, which is possible but costs you the automatic way
+back.
+
 ## The boot menu
 
 Three entries, plus one per slate:

@@ -227,6 +227,28 @@ func RetainAuto(fs *FsRoot) int {
 	return defaultRetainAuto
 }
 
+// AutoCheckpointEnabled reports whether the initramfs takes a checkpoint on
+// every boot. Machines running a stateful workload can turn it off, because a
+// snapshot forces a copy on the first write to each block even for nodatacow
+// files — measured to leave a random-rewrite workload at plain copy-on-write
+// speed and permanently fragmented, which makes chattr +C worthless while
+// checkpoints are being taken. The cost is the per-boot rollback point.
+func AutoCheckpointEnabled(fs *FsRoot) bool {
+	data, err := os.ReadFile(filepath.Join(fs.Path, MetaDir, "config"))
+	if err != nil {
+		return true
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "auto_checkpoint="); ok {
+			switch strings.TrimSpace(v) {
+			case "off", "no", "false", "0":
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func nextSeq(fs *FsRoot, slateName string) (int, error) {
 	all, err := ListCheckpoints(fs, slateName)
 	if err != nil {

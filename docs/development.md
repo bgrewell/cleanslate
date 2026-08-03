@@ -152,3 +152,19 @@ starts from an existing `main` and the first few assertions will not hold; use
 The console log goes to `/tmp/cleanslate-console.log`, which is the only place
 the initramfs hook's messages can be read — they do not reach the systemd
 journal.
+
+## Benchmarking copy-on-write behaviour
+
+`test/cowbench.py` measures what a checkpoint costs a nodatacow workload, which
+is what established that `chattr +C` does not help on a checkpointed slate. It
+needs root and a btrfs filesystem to write into:
+
+```sh
+truncate -s 8G /tmp/bench.img && mkfs.btrfs -q -f /tmp/bench.img
+sudo mount -o loop,noatime /tmp/bench.img /mnt && sudo chmod 777 /mnt
+sudo python3 test/cowbench.py /mnt
+```
+
+Absolute numbers are inflated by the page cache and the backing filesystem; the
+ratios between cases are the result. Re-run it before changing the checkpoint
+schedule or the default retention.

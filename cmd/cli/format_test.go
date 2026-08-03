@@ -202,3 +202,20 @@ func TestListDoesNotFlagCleanSlates(t *testing.T) {
 		t.Errorf("a slate with nothing nested should not be flagged:\n%s", buf.String())
 	}
 }
+
+// A boot that left no rollback point has to say so, because the absence is
+// invisible until someone tries to roll back and finds nothing to roll back to.
+func TestStatusReportsCheckpointsDisabled(t *testing.T) {
+	var buf bytes.Buffer
+	b := slate.Booted{Name: "db-host", Mode: slate.ModePersistent, Basis: "@db-host", Checkpoint: "disabled"}
+	if err := printStatus(&buf, b, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+
+	for _, want := range []string{"automatic checkpoints are off", "left no rollback point", "cleanslate checkpoint"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+}

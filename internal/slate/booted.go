@@ -37,6 +37,9 @@ type Booted struct {
 	FromCmdline bool
 }
 
+// AutoCheckpointOff reports that this boot deliberately left no rollback point.
+func (b Booted) AutoCheckpointOff() bool { return b.Checkpoint == "disabled" }
+
 // Diverged reports whether the boot fell back to something other than what was
 // asked for — a slate that had been deleted, or a malformed basis.
 func (b Booted) Diverged() bool {
