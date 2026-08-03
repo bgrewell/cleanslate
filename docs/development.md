@@ -88,11 +88,16 @@ local-top hook writes to `/run/cleanslate/` carry into the booted system with
 no unit to order against. Writing to `$rootmnt/run/...` from local-bottom —
 the obvious approach — is silently destroyed by that same move.
 
-**The ESP is mounted at `/efi`, not `/boot`.** The image ships an empty `/efi`,
-which is what `systemd-gpt-auto-generator` prefers; `/boot` in the rootfs is
-also empty because the kernel and initrd are copied to the ESP root. There is
-no `/etc/fstab` in the image at all. Code should call `slate.DetectESP()`
-rather than assume a path.
+**The ESP is mounted at `/efi`, by an explicit unit.** `scripts/relayout.sh`
+writes `efi.mount` addressed by PARTUUID and enables it. This is deliberate:
+`systemd-gpt-auto-generator` is supposed to place the ESP at `/efi` and did
+not, and the failure was invisible — the CLI wrote boot entries into an
+unmounted directory and reported success. Do not remove the unit on the
+assumption the generator covers it.
+
+`/boot` in the rootfs is empty, because the kernel and initrd are copied to the
+ESP root at build time, and there is no `/etc/fstab` in the image at all. Code
+should call `slate.DetectESP()` rather than assume a path.
 
 **Renaming an initramfs hook changes its ordering.** initramfs-tools orders
 `local-top` scripts alphabetically. Nothing here currently depends on it — no
