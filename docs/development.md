@@ -121,3 +121,29 @@ function. The wording tests assert the retired vocabulary in
 
 What is not covered by unit tests: anything touching real btrfs, and the
 initramfs hook. Those need the qemu run.
+
+## Boot verification
+
+Unit tests cannot reach the initramfs, the bootloader, or anything that only
+shows up across a reboot. `test/verify-boot.py` drives a built image through
+five boots with pexpect and asserts what the model claims:
+
+```sh
+sudo ./bin/cleanslate build
+cp /usr/share/OVMF/OVMF_VARS_4M.fd /tmp/cleanslate-ovmf-vars.fd
+python3 test/verify-boot.py
+```
+
+It checks first-boot slate creation, that work survives a reboot, automatic and
+manual checkpoints, rollback actually restoring, fork and its boot entry, a
+scratch run being discarded while leaving the slate untouched, the ESP being
+mounted, ssh surviving the boot, and stable host identity.
+
+It needs a **first-boot** image. Re-running against an already-booted image
+starts from an existing `main` and the first few assertions will not hold; use
+`--force` to rebuild, or delete every subvolume except `@baseline` and
+`@hostid` plus the `.cleanslate` directory at the filesystem root.
+
+The console log goes to `/tmp/cleanslate-console.log`, which is the only place
+the initramfs hook's messages can be read — they do not reach the systemd
+journal.
