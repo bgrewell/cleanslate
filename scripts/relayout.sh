@@ -78,15 +78,19 @@ done
 # Empty carve-out for the host-identity bind mount used at runtime.
 btrfs subvolume create "$MNT/@hostid"
 
-# Make @baseline the default subvolume so the kernel mounts it without
-# rootflags=subvol= on the cmdline.
+# Make @baseline the default subvolume. Every real boot names its subvolume on
+# the cmdline, so this only decides what a bare `mount /dev/sdaN` gets: the
+# read-only baseline, which is the safe answer.
 BASE_ID=$(btrfs subvolume show "$MNT/@baseline" | awk -F': *' '/Subvolume ID:/ {print $2; exit}')
 btrfs subvolume set-default "$BASE_ID" "$MNT"
 
-# Patch /etc/fstab inside @baseline so re-mounts know the subvolume.
+# Strip any subvol= from the root line of /etc/fstab. This file is captured
+# into every slate, so a subvolume named here would be wrong on every boot but
+# the one it was written for. The kernel cmdline is the only authority on which
+# subvolume is the root.
 FSTAB="$MNT/@baseline/etc/fstab"
 if [[ -f "$FSTAB" ]]; then
-    sed -i -E 's|(\s/\s+btrfs\s+)([^[:space:]]+)|\1subvol=@baseline|' "$FSTAB"
+    sed -i -E 's|(\s/\s+btrfs\s+)([^[:space:]]+)|\1defaults|' "$FSTAB"
 fi
 
 if [[ -n "$CLEANSLATE_BIN" ]]; then
@@ -135,7 +139,7 @@ else
 
     # loader.conf — systemd-boot's top-level config.
     cat > "$ESP_MNT/loader/loader.conf" <<EOF
-default cleanslate-fresh.conf
+default cleanslate-main.conf
 timeout 3
 console-mode max
 editor no
@@ -164,26 +168,47 @@ EOF
     # by the snapshot-on-boot model, not by mounting read-only.
     BASE_OPTS="root=PARTUUID=$ROOT_PARTUUID console=ttyS0,115200 console=tty0"
 
+    # sort-key fixes the menu order regardless of slate names; without it a
+    # slate called "aardvark" would sort above the default entry.
     write_entry() {
-        local name="$1" subvol="$2" title="$3"
+        local name="$1" title="$2" sortkey="$3" extra="$4"
         cat > "$ESP_MNT/loader/entries/cleanslate-${name}.conf" <<EOF
-title    $title
-version  $KVER
-linux    /vmlinuz-$KVER
-initrd   /initrd.img-$KVER
-options  $BASE_OPTS rootflags=subvol=$subvol
+title     $title
+version   $KVER
+sort-key  $sortkey
+linux     /vmlinuz-$KVER
+initrd    /initrd.img-$KVER
+options   $BASE_OPTS $extra
 EOF
     }
 
-    write_entry "fresh" "@runtime"  "cleanslate: fresh (ephemeral)"
-    write_entry "base"  "@baseline"     "cleanslate: base (rescue, read-only)"
+    # The default slate. It does not exist yet — the local-top hook creates it
+    # from the baseline on first boot, which is the same path it uses to
+    # recover a boot entry whose slate was deleted.
+    write_entry "main" "cleanslate: main" "cleanslate-1-main" \
+        "rootflags=subvol=@main"
 
-    # Remove the default mkosi-generated BLS entry — its `options` line is
-    # missing root= and we have our own entries now.
-    rm -f "$ESP_MNT"/loader/entries/cleanslate-*-generic.conf
+    # A throwaway boot off the baseline: always available, discarded at reboot.
+    # This is what hands a machine to the next person without touching slates.
+    write_entry "scratch" "cleanslate: scratch (discarded at reboot)" "cleanslate-5-scratch" \
+        "rootflags=subvol=@runtime cleanslate.basis=@baseline cleanslate.mode=scratch"
+
+    write_entry "rescue" "cleanslate: rescue (baseline, read-only)" "cleanslate-9-rescue" \
+        "rootflags=subvol=@baseline cleanslate.mode=rescue"
+
+    # Drop every entry we did not just write. This ESP was built moments ago,
+    # so anything else is mkosi's auto-generated entry, whose options line has
+    # no root=. Matching on content rather than on a glob coupled to ImageId=
+    # means renaming the image cannot silently resurrect it.
+    for entry in "$ESP_MNT"/loader/entries/*.conf; do
+        case "${entry##*/}" in
+            cleanslate-main.conf|cleanslate-scratch.conf|cleanslate-rescue.conf) ;;
+            *) rm -f "$entry" ;;
+        esac
+    done
 
     echo "$PROG: installed systemd-boot at /EFI/{BOOT,systemd}/ on ESP"
-    echo "$PROG: wrote BLS entries: cleanslate-fresh, cleanslate-base (kver=$KVER)"
+    echo "$PROG: wrote BLS entries: main, scratch, rescue (kver=$KVER)"
 fi
 
 # Mark @baseline as read-only at the btrfs level — done LAST, after all writes

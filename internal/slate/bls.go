@@ -16,10 +16,6 @@ import (
 // Entries this tool does not own — those written by the rootfs's kernel-package
 // postinst, e.g. cleanslate-6.8.0-111-generic.conf — are never edited.
 
-// DefaultESPPath returns the conventional ESP mount path on Ubuntu/Debian.
-// Callers may override via the --esp CLI flag.
-const DefaultESPPath = "/boot"
-
 // blsTemplate is the entry cloned as the basis for new ones. It is written at
 // build time and is the only place the build-time facts — kernel version,
 // initrd path, root=PARTUUID, console arguments — are recorded, none of which

@@ -1,13 +1,28 @@
 #!/bin/sh
 # cleanslate-state (local-top) — runs before the kernel mounts the root subvolume.
 #
-# If the kernel cmdline requests subvol=@runtime, delete any previous @runtime
-# and create a fresh snapshot from @baseline. This is the structural ephemeral
-# guarantee: the snapshot lives only across one boot. Crashes and power loss
-# are safe — cleanup happens on the *next* boot, not at shutdown.
+# Three boot modes, selected by the kernel cmdline:
 #
-# Named-state boots (subvol=@<name>) and rescue boots (subvol=@baseline) pass
-# through unchanged.
+#   persistent  rootflags=subvol=@<slate>            (the default)
+#               Checkpoints the slate, prunes old automatic checkpoints, and
+#               lets the kernel mount the slate read-write. Work survives the
+#               reboot; the checkpoint is the way back.
+#
+#   scratch     rootflags=subvol=@runtime cleanslate.basis=@<slate|baseline>
+#               cleanslate.mode=scratch
+#               Deletes any previous @runtime and snapshots the basis into a
+#               fresh one. Everything written during the boot is discarded at
+#               the next one.
+#
+#   rescue      rootflags=subvol=@baseline cleanslate.mode=rescue
+#               Mounts the baseline, which is btrfs read-only. No preparation.
+#
+# A target slate that does not exist is created from the baseline. That makes
+# first boot and recovery-from-a-deleted-slate the same code path, and means a
+# stale boot entry can never leave a machine unbootable.
+#
+# Checkpoints are taken here rather than from userspace because nothing has
+# written to the slate yet, so they are consistent without quiescing anything.
 
 PREREQ=""
 
@@ -24,8 +39,18 @@ esac
 
 . /scripts/functions
 
-# Find rootflags=subvol=... on the cmdline.
+RUNDIR=/run/cleanslate
+BASELINE=@baseline
+RETAIN_AUTO_DEFAULT=10
+
+# ---------------------------------------------------------------------------
+# Command line
+# ---------------------------------------------------------------------------
+
 subvol=
+basis=
+mode=
+
 for arg in $(cat /proc/cmdline); do
     case $arg in
         rootflags=*)
@@ -35,36 +60,105 @@ for arg in $(cat /proc/cmdline); do
                 esac
             done
             ;;
+        cleanslate.basis=*) basis=${arg#cleanslate.basis=} ;;
+        cleanslate.mode=*)  mode=${arg#cleanslate.mode=} ;;
     esac
 done
 
-# Strip a leading slash if present (subvol=/@runtime is equivalent to subvol=@runtime).
+# subvol=/@main and subvol=@main mean the same thing.
 case $subvol in
     /*) subvol=${subvol#/} ;;
 esac
+case $basis in
+    /*) basis=${basis#/} ;;
+esac
+
+# Names reach paths, so they are validated before any concatenation:
+# cleanslate.basis=@../../etc would otherwise escape the filesystem root.
+valid_subvol() {
+    case $1 in
+        @*[!A-Za-z0-9_@-]*) return 1 ;;
+        @?*)                return 0 ;;
+        *)                  return 1 ;;
+    esac
+}
+
+display_name() {
+    case $1 in
+        "$BASELINE") echo baseline ;;
+        @runtime)    echo scratch ;;
+        *)           echo "${1#@}" ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# Runtime facts
+#
+# Written to the initramfs's own /run, which /init moves onto $rootmnt/run
+# before pivot — so these survive into the booted system with no unit to order
+# against. Writing to $rootmnt/run instead is silently destroyed by that same
+# move, which is the trap in the obvious implementation.
+#
+# These record what actually happened, which is not always what was asked for:
+# every fallback below makes /proc/cmdline a lie.
+# ---------------------------------------------------------------------------
+
+write_facts() {
+    mkdir -p "$RUNDIR" 2>/dev/null || return 0
+    printf '%s\n' "$1" > "$RUNDIR/slate"      2>/dev/null || true
+    printf '%s\n' "$2" > "$RUNDIR/mode"       2>/dev/null || true
+    printf '%s\n' "$3" > "$RUNDIR/basis"      2>/dev/null || true
+    printf '%s\n' "$4" > "$RUNDIR/checkpoint" 2>/dev/null || true
+    printf '%s\n' "$5" > "$RUNDIR/requested"  2>/dev/null || true
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$RUNDIR/booted-at" 2>/dev/null || true
+    chmod 0644 "$RUNDIR"/* 2>/dev/null || true
+}
 
 if [ -z "$subvol" ]; then
-    log_warning_msg "cleanslate: no rootflags=subvol= on cmdline; skipping state setup"
+    log_warning_msg "cleanslate: no rootflags=subvol= on cmdline; leaving root selection alone"
+    write_facts unknown unknown "" "" ""
     exit 0
 fi
 
-# Only @runtime needs preparation. Everything else passes through.
-if [ "$subvol" != "@runtime" ]; then
-    log_begin_msg "cleanslate: booting subvolume $subvol (no state setup needed)"
+if [ "$mode" = rescue ]; then
+    log_begin_msg "cleanslate: rescue boot ($subvol, read-only)"
+    write_facts "$(display_name "$subvol")" rescue "$subvol" "" "$subvol"
     log_end_msg
     exit 0
 fi
 
-wait_for_udev 10
+# ---------------------------------------------------------------------------
+# From here the root subvolume has to be prepared, so failures are fatal.
+# Dropping to the initramfs shell is recoverable; silently booting the wrong
+# root is not.
+# ---------------------------------------------------------------------------
 
-# $ROOT may still be in cmdline form (PARTUUID=…, LABEL=…, UUID=…). Resolve
-# to an actual device node before trying to mount.
-dev=$(resolve_device "$ROOT" 2>/dev/null) || dev=
-if [ -z "$dev" ] || [ ! -b "$dev" ]; then
-    dev="$ROOT"
-fi
+# $ROOT may still be PARTUUID=…/LABEL=…/UUID=…. local_top runs before
+# local_device_setup and its patient retry loop, so slow-enumerating
+# controllers need one here — the previous code fell back to mounting the
+# cmdline token itself, which cannot succeed.
+resolve_root_device() {
+    _delay=${ROOTDELAY:-30}
+    _waited=0
+    while [ "$_waited" -le "$_delay" ]; do
+        _dev=$(resolve_device "$ROOT" 2>/dev/null) || _dev=
+        if [ -n "$_dev" ] && [ -b "$_dev" ]; then
+            echo "$_dev"
+            return 0
+        fi
+        [ "$_waited" -eq 0 ] && wait_for_udev 10
+        sleep 1
+        _waited=$((_waited + 1))
+    done
+    return 1
+}
 
-mnt=$(mktemp -d /tmp/cleanslate-state.XXXXXX)
+dev=$(resolve_root_device) || {
+    log_failure_msg "cleanslate: root device $ROOT did not appear"
+    panic "cleanslate cannot resolve the root device"
+}
+
+mnt=$(mktemp -d /tmp/cleanslate.XXXXXX)
 cleanup() {
     if mountpoint -q "$mnt" 2>/dev/null; then
         umount "$mnt" || true
@@ -72,33 +166,151 @@ cleanup() {
     rmdir "$mnt" 2>/dev/null || true
 }
 
-log_begin_msg "cleanslate: preparing fresh @runtime from @baseline"
-
 if ! mount -t btrfs -o subvol=/ "$dev" "$mnt"; then
-    log_failure_msg "cleanslate: failed to mount $dev for state setup"
+    log_failure_msg "cleanslate: failed to mount $dev to prepare the root"
     cleanup
-    panic "cleanslate cannot prepare @runtime"
+    panic "cleanslate cannot prepare the root subvolume"
 fi
 
-if [ ! -d "$mnt/@baseline" ]; then
-    log_failure_msg "cleanslate: @baseline subvolume not present at top of $ROOT"
+if [ ! -d "$mnt/$BASELINE" ]; then
+    log_failure_msg "cleanslate: $BASELINE is not present at the top of $ROOT"
     cleanup
-    panic "cleanslate cannot find @baseline"
+    panic "cleanslate cannot find the baseline"
 fi
 
-if [ -d "$mnt/@runtime" ]; then
-    if ! btrfs subvolume delete "$mnt/@runtime" >/dev/null; then
-        log_failure_msg "cleanslate: failed to delete previous @runtime"
-        cleanup
-        panic "cleanslate cannot delete previous @runtime"
+# btrfs refuses to delete a subvolume containing nested subvolumes, which is
+# exactly what a container runtime on the btrfs storage driver leaves behind.
+# Without the recursive form, one docker user makes every subsequent boot panic.
+delete_subvol() {
+    if btrfs subvolume delete -R "$1" >/dev/null 2>&1; then
+        return 0
     fi
-fi
+    # Older btrfs-progs: delete nested subvolumes depth-first (longest path
+    # first), then the subvolume itself.
+    btrfs subvolume list -o "$1" 2>/dev/null \
+        | sed 's/.*path //' \
+        | awk '{ print length, $0 }' | sort -rn | cut -d' ' -f2- \
+        | while read -r nested; do
+            [ -n "$nested" ] || continue
+            btrfs subvolume delete "$mnt/$nested" >/dev/null 2>&1 || true
+        done
+    btrfs subvolume delete "$1" >/dev/null 2>&1
+}
 
-if ! btrfs subvolume snapshot "$mnt/@baseline" "$mnt/@runtime" >/dev/null; then
-    log_failure_msg "cleanslate: failed to snapshot @baseline into @runtime"
-    cleanup
-    panic "cleanslate cannot snapshot @baseline"
+# Creating the target from the baseline covers both first boot and a boot entry
+# that outlived its slate.
+ensure_slate() {
+    if [ -d "$mnt/$1" ]; then
+        return 0
+    fi
+    log_begin_msg "cleanslate: $1 does not exist; creating it from the baseline"
+    if ! btrfs subvolume snapshot "$mnt/$BASELINE" "$mnt/$1" >/dev/null; then
+        log_failure_msg "cleanslate: failed to create $1 from $BASELINE"
+        cleanup
+        panic "cleanslate cannot create the root subvolume"
+    fi
+    log_end_msg
+}
+
+# ---------------------------------------------------------------------------
+# Checkpoints
+#
+# Named @<slate>.ckpt.<seq>.<auto|keep>. The retention class lives in the name
+# so pruning is pure name matching: the initramfs is a poor place to parse
+# metadata files, and pruning must not depend on anything that can go missing
+# or malformed. Messages and timestamps live in a sidecar the CLI owns.
+# ---------------------------------------------------------------------------
+
+retain_auto() {
+    _n=$(sed -n 's/^retain_auto=\([0-9][0-9]*\)$/\1/p' \
+        "$mnt/.cleanslate/config" 2>/dev/null | tail -1)
+    if [ -n "$_n" ]; then echo "$_n"; else echo "$RETAIN_AUTO_DEFAULT"; fi
+}
+
+next_seq() {
+    _last=$(ls -d "$mnt/$1".ckpt.* 2>/dev/null \
+        | sed 's/.*\.ckpt\.\([0-9]*\)\..*/\1/' | sort -n | tail -1)
+    [ -n "$_last" ] || _last=0
+    printf '%04d' $((_last + 1))
+}
+
+checkpoint_slate() {
+    _slate=$1
+    _ckpt="$_slate.ckpt.$(next_seq "$_slate").auto"
+    if btrfs subvolume snapshot -r "$mnt/$_slate" "$mnt/$_ckpt" >/dev/null 2>&1; then
+        echo "$_ckpt"
+    else
+        # A slate that cannot be checkpointed should still boot; losing the
+        # rollback point is worse than losing the machine only in theory.
+        log_warning_msg "cleanslate: could not checkpoint $_slate; continuing"
+        echo ""
+    fi
+}
+
+prune_auto() {
+    _keep=$(retain_auto)
+    _all=$(ls -d "$mnt/$1".ckpt.*.auto 2>/dev/null | sort)
+    [ -n "$_all" ] || return 0
+    _count=$(echo "$_all" | wc -l)
+    [ "$_count" -gt "$_keep" ] || return 0
+    echo "$_all" | head -n $((_count - _keep)) | while read -r old; do
+        [ -n "$old" ] || continue
+        delete_subvol "$old" || true
+    done
+}
+
+# ---------------------------------------------------------------------------
+# Prepare
+# ---------------------------------------------------------------------------
+
+if [ "$subvol" = "@runtime" ]; then
+    # Scratch: a disposable copy of the basis.
+    requested=$basis
+    [ -n "$basis" ] || basis=$BASELINE
+
+    if ! valid_subvol "$basis"; then
+        log_warning_msg "cleanslate: ignoring malformed basis '$basis'; using the baseline"
+        basis=$BASELINE
+    elif [ "$basis" = "@runtime" ] || [ "$basis" = "@hostid" ]; then
+        log_warning_msg "cleanslate: $basis cannot be a basis; using the baseline"
+        basis=$BASELINE
+    elif [ ! -d "$mnt/$basis" ]; then
+        log_warning_msg "cleanslate: basis $basis no longer exists; using the baseline"
+        basis=$BASELINE
+    fi
+
+    log_begin_msg "cleanslate: preparing a scratch root from $basis"
+
+    if [ -d "$mnt/@runtime" ] && ! delete_subvol "$mnt/@runtime"; then
+        log_failure_msg "cleanslate: failed to delete the previous scratch root"
+        cleanup
+        panic "cleanslate cannot clear the previous scratch root"
+    fi
+
+    if ! btrfs subvolume snapshot "$mnt/$basis" "$mnt/@runtime" >/dev/null; then
+        log_failure_msg "cleanslate: failed to snapshot $basis into @runtime"
+        cleanup
+        panic "cleanslate cannot create the scratch root"
+    fi
+
+    write_facts "$(display_name "$basis")" scratch "$basis" "" "$requested"
+    log_end_msg
+else
+    # Persistent: the slate itself is the root, and it keeps what happens.
+    if ! valid_subvol "$subvol"; then
+        log_failure_msg "cleanslate: refusing to prepare malformed subvolume '$subvol'"
+        cleanup
+        panic "cleanslate cannot prepare the root subvolume"
+    fi
+
+    ensure_slate "$subvol"
+
+    log_begin_msg "cleanslate: checkpointing $(display_name "$subvol") before boot"
+    ckpt=$(checkpoint_slate "$subvol")
+    prune_auto "$subvol"
+    log_end_msg
+
+    write_facts "$(display_name "$subvol")" persistent "$subvol" "$ckpt" "$subvol"
 fi
 
 cleanup
-log_end_msg

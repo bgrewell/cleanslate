@@ -23,8 +23,8 @@ func newStateCmd() *stencil.Command {
 		"Path to a pre-mounted filesystem-root (subvol=/) view of the btrfs filesystem. Default: discover from / and mount a temp view (requires root).",
 		"")
 	cmd.PersistentFlags.String("esp", "",
-		"Path to the mounted ESP. Default: "+slate.DefaultESPPath+". Used for boot-loader entry management on save/delete/switch.",
-		slate.DefaultESPPath)
+		"Path to the mounted EFI system partition. Discovered automatically when unset.",
+		"")
 	cmd.PersistentFlags.Bool("no-bls", "",
 		"Skip Boot Loader Specification entry management on save/delete. Use when operating on a non-running image without an ESP available, or when only the btrfs side should change.",
 		false)
@@ -66,7 +66,10 @@ func newStateCmd() *stencil.Command {
 			fmt.Printf("saved %q from %s\n", args[0], displaySource(source))
 
 			if !ctx.Flags.Bool("no-bls") {
-				esp := ctx.Flags.String("esp")
+				esp, err := resolveESP(ctx.Flags.String("esp"))
+				if err != nil {
+					return err
+				}
 				if err := slate.WriteBLSEntry(esp, args[0]); err != nil {
 					fmt.Fprintf(os.Stderr, "warning: failed to write BLS entry: %v\n", err)
 				} else {
@@ -98,7 +101,10 @@ func newStateCmd() *stencil.Command {
 			fmt.Printf("deleted %q\n", args[0])
 
 			if !ctx.Flags.Bool("no-bls") {
-				esp := ctx.Flags.String("esp")
+				esp, err := resolveESP(ctx.Flags.String("esp"))
+				if err != nil {
+					return err
+				}
 				if err := slate.DeleteBLSEntry(esp, args[0]); err != nil {
 					fmt.Fprintf(os.Stderr, "warning: failed to remove BLS entry: %v\n", err)
 				}
@@ -183,4 +189,14 @@ func printSlateList(w *os.File, states []slate.Slate) error {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", s.Name, s.Subvolume, reserved, parent)
 	}
 	return tw.Flush()
+}
+
+// resolveESP honours an explicit --esp and otherwise discovers the mounted
+// EFI system partition. Discovery matters because the ESP is mounted at /efi
+// on these images, not the /boot the code previously assumed.
+func resolveESP(flag string) (string, error) {
+	if flag != "" {
+		return flag, nil
+	}
+	return slate.DetectESP()
 }
