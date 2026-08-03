@@ -1,16 +1,16 @@
-package state
+package slate
 
 import "testing"
 
 func TestRewriteBLSEntry(t *testing.T) {
-	template := `title    testbox: fresh (ephemeral)
+	template := `title    cleanslate: fresh (ephemeral)
 version  6.8.0-111-generic
 linux    /vmlinuz-6.8.0-111-generic
 initrd   /initrd.img-6.8.0-111-generic
 options  root=PARTUUID=abc ro console=ttyS0,115200 console=tty0 rootflags=subvol=@runtime
 `
 	got := rewriteBLSEntry(template, "gnb-xyz", "@gnb-xyz")
-	want := `title    testbox: gnb-xyz
+	want := `title    cleanslate: gnb-xyz
 version  6.8.0-111-generic
 linux    /vmlinuz-6.8.0-111-generic
 initrd   /initrd.img-6.8.0-111-generic
@@ -34,14 +34,14 @@ func TestRewriteOptionsLine(t *testing.T) {
 		},
 		{
 			in:     "options  rootflags=compress=zstd,subvol=@runtime ro",
-			subvol: "@base",
-			want:   "options  rootflags=compress=zstd,subvol=@base ro",
+			subvol: "@baseline",
+			want:   "options  rootflags=compress=zstd,subvol=@baseline ro",
 		},
 		{
 			// no rootflags at all → append one
 			in:     "options  root=PARTUUID=abc ro",
-			subvol: "@base",
-			want:   "options  root=PARTUUID=abc ro rootflags=subvol=@base",
+			subvol: "@baseline",
+			want:   "options  root=PARTUUID=abc ro rootflags=subvol=@baseline",
 		},
 		{
 			// rootflags without subvol component → add subvol

@@ -1,0 +1,18 @@
+[Unit]
+Description=Generate cleanslate SSH host keys on the @hostid subvolume
+After=local-fs.target systemd-tmpfiles-setup.service
+# Ordered before the ssh daemon but deliberately NOT before ssh.socket: a
+# socket unit is reached as part of sockets.target, which precedes
+# basic.target, which this service implicitly follows. Naming the socket here
+# closes that loop and systemd breaks it by dropping ssh.socket — leaving the
+# box with no ssh at all. The keys are needed by the daemon that accepts the
+# connection, not by the socket that listens for it.
+Before=ssh.service sshd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/cleanslate-generate-host-keys
+
+[Install]
+WantedBy=multi-user.target

@@ -1,104 +1,169 @@
-# testbox
+# cleanslate
 
-A tool for building customizable Ubuntu 24.04 OS images with a layered runtime
-model: an immutable base, a transparent ephemeral writable layer, and optional
-named persistent layers you can save, restore, and switch between.
+A custom Ubuntu-based distro for machines that keep your work and can always
+go back.
 
-## Concept
+You build the baseline once and install it on as many machines as you like.
+From then on, each machine runs a **slate**: a named, persistent line of work.
+Boot it, install things, break things, reboot — it is all still there. Every
+boot leaves a checkpoint behind, so there is always a way back to how things
+were.
 
-- **Base** — A baked, customizable Ubuntu 24.04 image that boots normally.
-- **Ephemeral layer** — All writes at runtime go to a transparent overlay backed
-  by a btrfs snapshot. On reboot the snapshot is discarded; the system returns
-  to the fresh base state.
-- **Named layers** — Promote the current ephemeral state to a named persistent
-  layer (e.g. `gnb-xyz`). Switch between named layers and the fresh base across
-  reboots from the bootloader.
+When a setup is worth keeping separately, fork it into its own slate. When a
+machine needs to go to someone else, reset it to the pristine baseline, which
+is never deleted no matter how far a slate has drifted.
 
-Built on btrfs subvolumes and snapshots; images produced via mkosi.
-
-## Status
-
-S1–S4 are implemented and verified end-to-end in qemu/OVMF. The image
-produced by `testbox build` is bootable on real UEFI hardware: it contains
-`@base` (immutable rootfs, marked btrfs read-only), `@hostid` (stable SSH
-identity carve-out), the testbox CLI at `/usr/local/bin/testbox`, an
-initramfs hook that snapshots `@base→@runtime` before root mount, and
-systemd-boot installed at the firmware fallback path with BLS entries for
-`fresh` and `base (rescue)`.
-
-Runtime commands:
-
-- `testbox state list` — tabular dump of testbox-managed subvolumes.
-- `testbox state save <name>` — snapshot the running state into `@<name>`
-  and emit a `testbox-<name>.conf` BLS entry.
-- `testbox state delete <name>` — remove the snapshot and its BLS entry.
-- `testbox state current` — print the active state name.
-- `testbox state switch <name> [--reboot]` — set a systemd-boot one-shot
-  via `bootctl set-oneshot`. The default boot target is unchanged, so the
-  box returns to `fresh` on the boot after the switched one.
-- `testbox install <target>` — write the raw image to a block device or
-  file (dd-equivalent, with safety checks against root-device overwrites).
-
-UEFI is the primary target. BIOS boot is not currently installed by the
-build; it would re-introduce GRUB and is left for a follow-up if needed.
-
-See [DESIGN.md](DESIGN.md) for architecture and the full design rationale.
-
-### Known limitation: no bootloader installed yet
-
-S1 ships `Bootloader=none` in the mkosi config. The image contains a kernel
-and initrds on the ESP partition, but no UEFI or BIOS bootloader binary, so
-firmware can't pick the image up directly without help. This is deliberate —
-S2 needs to install a bootloader configured for state-switching anyway, so
-S1 deferred the bootloader question rather than build something we'd
-immediately replace. Verify S1 builds with `qemu -kernel` (see below).
-
-## Requirements
-
-- mkosi v26 or newer. Ubuntu 24.04 noble's archive doesn't ship a recent
-  enough version; install upstream:
-  ```sh
-  pipx install git+https://github.com/systemd/mkosi.git@v26
-  ```
-  or use the [openSUSE Build Service apt repo](https://software.opensuse.org/download.html?project=system:systemd&package=mkosi).
-- Host packages: `debootstrap`, `mtools`, `btrfs-progs`, `systemd-container`,
-  `dosfstools`, `squashfs-tools`, `bubblewrap`, `debian-archive-keyring`,
-  `ovmf`, `qemu-system-x86`, `qemu-utils`. mkosi will tell you about anything
-  else it needs.
-- Go 1.22+ to build the testbox CLI.
-
-## Building
-
-```sh
-make build                         # build the testbox CLI
-sudo ./bin/testbox build           # build the OS disk image
+```
+$ cleanslate status
+slate       pg-tuned
+mode        persistent — changes here are kept
+booted      2026-08-03 09:12 UTC (7h 4m ago)
+checkpoint  taken at boot
 ```
 
-`sudo` is required because the post-mkosi relayout step
-(`scripts/relayout.sh`) loop-mounts the produced raw image to create the
-`@base` and `@hostid` subvolumes. Pass `--skip-relayout` to leave the rootfs
-flat (useful when iterating on mkosi config). Output lands in
-`mkosi.output/testbox.raw`.
+## Working on a machine
 
-## Verifying boot in qemu (UEFI)
+Everything is where you left it, so most of the time there is nothing to do.
+The commands are for the moments when there is.
 
-Need OVMF on the host (`apt install ovmf qemu-system-x86`). The raw image
-is a self-contained UEFI-bootable disk:
+**Mark a state worth returning to.** Checkpoints made this way are kept until
+you remove them, unlike the ones taken automatically at each boot, which roll
+off as newer ones arrive.
 
 ```sh
-cp /usr/share/OVMF/OVMF_VARS_4M.fd /tmp/ovmf-vars.fd
-qemu-system-x86_64 -enable-kvm -m 2G -smp 2 \
-    -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
-    -drive if=pflash,format=raw,file=/tmp/ovmf-vars.fd \
-    -drive file=mkosi.output/testbox.raw,format=raw,if=virtio \
-    -netdev user,id=n,hostfwd=tcp:127.0.0.1:2222-:22 \
-    -device virtio-net-pci,netdev=n \
-    -nographic -serial mon:stdio -display none
+cleanslate checkpoint -m "postgres tuned, benchmarks pass"
 ```
 
-systemd-boot shows the menu (`fresh` / `base`), counts down 3 s, and boots
-the default (`fresh`). The box accepts SSH on the forwarded port; set up
-`mkosi.local.conf` with a `RootPassword=` or drop a public key into
-`mkosi.extra/root/.ssh/authorized_keys` first.
+**Go back.** Rollback takes effect at the next boot — a slate is the running
+system and cannot be replaced underneath itself. The state you are leaving is
+checkpointed first, so a rollback can itself be rolled back.
 
-See [DESIGN.md](DESIGN.md) for the architecture and roadmap.
+```sh
+cleanslate history
+cleanslate rollback pg-tuned.4 --reboot
+```
+
+**Start a new line of work** from where you are, leaving the current slate
+untouched:
+
+```sh
+cleanslate fork pg-tuned-v2
+cleanslate switch pg-tuned-v2 --reboot
+```
+
+**Try something risky** without consequences. A scratch run copies the slate,
+runs from the copy, and throws it away at the next reboot:
+
+```sh
+cleanslate switch pg-tuned --scratch --reboot
+```
+
+**Hand the machine over.** `reset` returns a slate to the freshly built
+baseline. The old state is checkpointed first, and the baseline is never
+pruned, so this works however long the machine has been in use.
+
+```sh
+cleanslate reset --reboot
+```
+
+## What to keep
+
+Keeping things is the default here, which makes it worth being deliberate
+about what deserves its own name.
+
+The rule: **explore on one slate, fork from another.** A slate worth naming
+should hold a conclusion you reached, not the search that got you there.
+
+Say you spend a day tuning Postgres. You try three storage layouts and four
+`postgresql.conf` variants, build `pgbench` from source to compare them, load
+40 GB of test data, and leave a dozen half-edited files behind. By the end you
+know the answer: XFS on the NVMe, `shared_buffers=32GB`, WAL on a separate
+device.
+
+Don't fork that. Roll back to the checkpoint from before you started, do only
+what the conclusion requires, and fork *that*:
+
+```sh
+cleanslate rollback pg-tuned.11 --reboot
+
+sudo mkfs.xfs /dev/nvme1n1
+sudo mount /dev/nvme1n1 /var/lib/postgresql
+sudo apt install -y postgresql-16
+sudo cp postgres-tuned.conf /etc/postgresql/16/main/postgresql.conf
+sudo systemctl restart postgresql
+pg_isready && sudo -u postgres psql -c 'show shared_buffers'
+
+cleanslate checkpoint -m "postgres tuned for the ingest workload"
+cleanslate fork pg-tuned-v1
+```
+
+Six commands and a check. The new slate holds exactly what someone needs, it
+is small, and anyone can read those steps and know what is in it. The 40 GB of
+test data and the three layouts that lost are not in it, because they were
+never part of the answer.
+
+A useful test: **if you can't write down what's in a slate, it isn't ready to
+be forked.** Prefer `v1` → `v2` over editing a good slate in place — the
+working one keeps working while you build the next.
+
+## The boot menu
+
+Three entries, plus one per slate:
+
+| Entry | What it does |
+|---|---|
+| a slate, e.g. `main` | Boots it and keeps what happens. This is the normal case. |
+| `scratch` | A throwaway copy of the baseline, discarded at reboot. |
+| `rescue` | The baseline itself, read-only, for when a slate will not boot. |
+
+A machine's first boot creates a slate called `main` from the baseline, so a
+new install behaves like an ordinary Ubuntu box until you decide otherwise.
+
+## A note on shared machines
+
+Nothing is erased automatically. Two people using the same machine one after
+the other see each other's work unless someone resets it or boots `scratch`.
+
+That is a deliberate trade. Erasing on every reboot would make any procedure
+that reboots part-way through — driver installs, firmware, multi-stage
+installers — impossible to finish, and that is ordinary work on the hardware
+this is built for.
+
+If a machine needs to come up clean for the next person, `cleanslate reset` is
+the command, and the `scratch` entry is the way to work without leaving
+anything behind.
+
+## Building and installing machines
+
+```sh
+make build                              # build the CLI
+sudo ./bin/cleanslate build             # bake the baseline image
+sudo ./bin/cleanslate install /dev/sdX  # write it to a disk
+```
+
+Building needs root: the last step loop-mounts the image to lay out its
+subvolumes. See [docs/development.md](docs/development.md) for requirements,
+the qemu recipe, and repository layout.
+
+## What works today
+
+Implemented and verified end to end: building and installing images,
+persistent slates, automatic and manual checkpoints, retention, rollback,
+fork, switch, scratch runs, reset, rescue boot, and stable SSH host identity
+across slates.
+
+Not built yet:
+
+- **Updating the baseline in place.** Changing the baked image means building
+  and reinstalling it. A guarded update path is planned, deliberately scoped
+  to updates and security patching rather than changes of purpose.
+- **Moving slates between machines** (`export` / `import`).
+- **Per-slate disk usage** in `list`. Deliberately omitted rather than
+  deferred — see [docs/design.md](docs/design.md) for why the honest number is
+  expensive and the cheap one is misleading.
+
+UEFI is the only supported boot path. BIOS is not installed by the build.
+
+See [docs/design.md](docs/design.md) for the architecture and the reasoning
+behind it, and [docs/terminology.md](docs/terminology.md) for what the words
+mean.

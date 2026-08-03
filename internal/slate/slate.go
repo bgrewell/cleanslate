@@ -1,7 +1,7 @@
-// Package state implements the testbox state-management commands: list,
-// save, delete, current. State is modelled directly on btrfs subvolumes:
+// Package state implements the cleanslate state-management commands: list,
+// save, delete, current. Slate is modelled directly on btrfs subvolumes:
 //
-//   - @base    — the immutable baked OS (reserved)
+//   - @baseline    — the immutable baked OS (reserved)
 //   - @runtime — ephemeral working root, recreated each fresh boot (reserved)
 //   - @hostid  — stable SSH identity carve-out (reserved, hidden from list)
 //   - @<name>  — named persistent layers, freely created and deleted
@@ -10,7 +10,7 @@
 // represented by an FsRoot. Most callers should use MountFsRoot, which
 // resolves the device backing / and mounts a temp view; tests and the
 // --fs-root flag can use FsRootAt against a pre-existing mount.
-package state
+package slate
 
 import (
 	"fmt"
@@ -21,32 +21,32 @@ import (
 )
 
 const (
-	BaseSubvol    = "@base"
-	RuntimeSubvol = "@runtime"
-	HostidSubvol  = "@hostid"
+	BaselineSubvol = "@baseline"
+	RuntimeSubvol  = "@runtime"
+	HostidSubvol   = "@hostid"
 )
 
 // reservedSubvols are subvolumes managed by the runtime infrastructure;
-// they cannot be created or deleted via `testbox state`.
+// they cannot be created or deleted via `cleanslate state`.
 var reservedSubvols = map[string]bool{
-	BaseSubvol:    true,
-	RuntimeSubvol: true,
-	HostidSubvol:  true,
+	BaselineSubvol: true,
+	RuntimeSubvol:  true,
+	HostidSubvol:   true,
 }
 
-// State is a user-facing view of one btrfs subvolume.
-type State struct {
-	Name       string // user-facing name ("base", "fresh", "gnb-xyz")
+// Slate is a user-facing view of one btrfs subvolume.
+type Slate struct {
+	Name       string // user-facing name ("baseline", "scratch", "pg-tuned")
 	Subvolume  string // on-disk subvolume name (always begins with @)
 	UUID       string
 	ParentUUID string // empty if not a snapshot
 	Generation uint64
-	Reserved   bool // true for @base, @runtime, @hostid
+	Reserved   bool // true for @baseline, @runtime, @hostid
 }
 
-// List returns all testbox-managed subvolumes on the given fs-root mount.
+// List returns all cleanslate-managed subvolumes on the given fs-root mount.
 // The @hostid subvolume is filtered out — it is infrastructure, not state.
-func List(fs *FsRoot) ([]State, error) {
+func List(fs *FsRoot) ([]Slate, error) {
 	subvols, err := btrfsListSubvolumes(fs.Path)
 	if err != nil {
 		return nil, err
@@ -57,7 +57,7 @@ func List(fs *FsRoot) ([]State, error) {
 		uuidToName[s.UUID] = s.Path
 	}
 
-	var out []State
+	var out []Slate
 	for _, s := range subvols {
 		if !strings.HasPrefix(s.Path, "@") {
 			continue
@@ -65,7 +65,7 @@ func List(fs *FsRoot) ([]State, error) {
 		if s.Path == HostidSubvol {
 			continue
 		}
-		out = append(out, State{
+		out = append(out, Slate{
 			Name:       displayName(s.Path),
 			Subvolume:  s.Path,
 			UUID:       s.UUID,
@@ -78,32 +78,53 @@ func List(fs *FsRoot) ([]State, error) {
 }
 
 // displayName converts an on-disk subvolume name to its user-facing form.
-// @base → "base", @runtime → "fresh", @gnb-xyz → "gnb-xyz".
+// @baseline → "baseline", @runtime → "scratch", @pg-tuned → "pg-tuned".
 func displayName(subvol string) string {
 	switch subvol {
-	case BaseSubvol:
-		return "base"
+	case BaselineSubvol:
+		return "baseline"
 	case RuntimeSubvol:
-		return "fresh"
+		return "scratch"
 	}
 	return strings.TrimPrefix(subvol, "@")
 }
 
 var validNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
+// reservedNames cannot be used for a slate. "scratch", "rescue", and
+// "baseline" name boot modes rather than slates; a slate answering to one of
+// them would make the boot menu ambiguous.
+var reservedNames = map[string]bool{
+	"baseline": true,
+	"scratch":  true,
+	"rescue":   true,
+	"runtime":  true,
+	"hostid":   true,
+}
+
+// validateName rejects names that are unusable as a subvolume, as a boot-entry
+// filename, or as a word in the boot menu. Names reach both paths and
+// filenames, so this is a safety boundary and not only a courtesy: a name
+// containing a slash or a leading dot could escape the entries directory.
+func validateName(name string) error {
+	switch {
+	case name == "":
+		return fmt.Errorf("a slate name is required")
+	case !validNamePattern.MatchString(name):
+		return fmt.Errorf("invalid slate name %q: use letters, digits, '-' and '_'", name)
+	case reservedNames[name] || reservedSubvols["@"+name]:
+		return fmt.Errorf("%q is reserved", name)
+	}
+	return nil
+}
+
 // Save snapshots source into a new named state. Source may be the user-
-// facing name of an existing state ("fresh", "base", "gnb-xyz") or "current"
+// facing name of an existing slate ("scratch", "baseline", "pg-tuned") or "current"
 // to use the running active subvolume. Reserved names cannot be used as the
 // destination.
 func Save(fs *FsRoot, name, source string) error {
-	if name == "" {
-		return fmt.Errorf("state name is required")
-	}
-	if !validNamePattern.MatchString(name) {
-		return fmt.Errorf("invalid state name %q: only letters, digits, '-', and '_' are allowed", name)
-	}
-	if reservedSubvols["@"+name] || name == "base" || name == "fresh" {
-		return fmt.Errorf("name %q is reserved", name)
+	if err := validateName(name); err != nil {
+		return err
 	}
 
 	srcSubvol, err := resolveSource(fs, source)
@@ -114,7 +135,7 @@ func Save(fs *FsRoot, name, source string) error {
 	dstPath := filepath.Join(fs.Path, "@"+name)
 
 	if _, err := os.Stat(dstPath); err == nil {
-		return fmt.Errorf("state %q already exists", name)
+		return fmt.Errorf("a slate named %q already exists", name)
 	}
 
 	return btrfsSnapshot(srcPath, dstPath)
@@ -126,10 +147,10 @@ func resolveSource(fs *FsRoot, source string) (string, error) {
 		return resolveCurrentSubvolume(fs)
 	}
 	switch source {
-	case "fresh":
+	case "scratch":
 		return RuntimeSubvol, nil
-	case "base":
-		return BaseSubvol, nil
+	case "baseline":
+		return BaselineSubvol, nil
 	}
 	return "@" + strings.TrimPrefix(source, "@"), nil
 }
@@ -137,7 +158,7 @@ func resolveSource(fs *FsRoot, source string) (string, error) {
 func resolveCurrentSubvolume(fs *FsRoot) (string, error) {
 	subvol, err := currentSubvolFromCmdline()
 	if err != nil {
-		// Not running on a testbox; fall back to @runtime so `state save`
+		// Not running on a cleanslate; fall back to @runtime so `state save`
 		// from the build host operates on the ephemeral working root.
 		return RuntimeSubvol, nil
 	}
@@ -162,7 +183,7 @@ func Delete(fs *FsRoot, name string) error {
 
 // Current returns the user-facing name of the currently-active state by
 // parsing /proc/cmdline for rootflags=subvol=. Returns an error if no such
-// flag is present (e.g. not running on a testbox).
+// flag is present (e.g. not running on a cleanslate).
 func Current() (string, error) {
 	subvol, err := currentSubvolFromCmdline()
 	if err != nil {

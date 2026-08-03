@@ -5,8 +5,7 @@ import (
 
 	"github.com/bgrewell/stencil"
 
-	"github.com/bgrewell/testbox/internal/build"
-	"github.com/bgrewell/testbox/internal/install"
+	"github.com/bgrewell/cleanslate/internal/slate"
 )
 
 // Populated at build time via -ldflags (see Makefile).
@@ -17,60 +16,69 @@ var (
 	appBranch     = ""
 )
 
+const rootSummary = "A custom Ubuntu distro whose machines keep your work and can roll back."
+
+// rootLong groups the verbs by what they are for. stencil sorts subcommands
+// alphabetically in its help output, which buries the everyday verbs among the
+// image-building ones, so the grouping is spelled out here instead.
+const rootLong = `cleanslate machines run slates: named, persistent lines of work.
+Boot one, work, reboot — what you did is still there. Every boot leaves a
+checkpoint, so there is always a way back.
+
+Working with slates:
+  status      what you are running and where it came from
+  list        the slates on this machine
+  checkpoint  mark a point worth returning to
+  history     the checkpoints on a slate
+  rollback    return a slate to a checkpoint
+  fork        start a new slate from this one
+  switch      boot a different slate
+  reset       return a slate to the pristine baseline
+  discard     delete a slate and its checkpoints
+
+Building and installing machines:
+  build       bake a baseline image
+  install     write an image to a disk`
+
 func main() {
-	root := &stencil.Command{
-		Name:            "testbox",
-		Summary:         "Build customizable Ubuntu 24.04 OS images with ephemeral and named persistent layers.",
-		PersistentFlags: stencil.NewFlagSet(),
-		Flags:           stencil.NewFlagSet(),
-	}
-	root.PersistentFlags.String("log-level", "l", "Log level", "info").Enum = []string{"info", "debug", "trace"}
-	root.PersistentFlags.Bool("quiet", "q", "Quiet output", false)
-
-	buildCmd := &stencil.Command{
-		Name:    "build",
-		Summary: "Build the base OS disk image (wraps mkosi).",
-		Flags:   stencil.NewFlagSet(),
-		Run: func(ctx *stencil.Context) error {
-			return build.Run(build.Options{
-				ConfigDir:    ctx.Flags.String("config-dir"),
-				Force:        ctx.Flags.Bool("force"),
-				SkipRelayout: ctx.Flags.Bool("skip-relayout"),
-			})
-		},
-	}
-	buildCmd.Flags.String("config-dir", "C", "Directory containing mkosi.conf", ".")
-	buildCmd.Flags.Bool("force", "f", "Pass --force to mkosi (clear prior output)", false)
-	buildCmd.Flags.Bool("skip-relayout", "", "Skip the @base/@hostid relayout step (leave rootfs flat)", false)
-
-	installCmd := &stencil.Command{
-		Name:    "install",
-		Summary: "Write the testbox raw image to a target block device or file (dd-equivalent).",
-		Flags:   stencil.NewFlagSet(),
-		Args:    stencil.ArgSpec{Min: 1, Max: 1, Names: []string{"target"}},
-		Run: func(ctx *stencil.Context) error {
-			return install.Run(install.Options{
-				ImagePath: ctx.Flags.String("image"),
-				Target:    ctx.Args[0],
-				Force:     ctx.Flags.Bool("force"),
-			})
-		},
-	}
-	installCmd.Flags.String("image", "i", "Path to the raw image to write", "mkosi.output/testbox.raw")
-	installCmd.Flags.Bool("force", "f", "Don't prompt for confirmation when writing to a block device", false)
-
-	root.Sub = []*stencil.Command{buildCmd, installCmd, newStateCmd()}
-
 	app := stencil.NewApp(
-		stencil.WithName("testbox"),
-		stencil.WithDescription("Build customizable Ubuntu 24.04 OS images with ephemeral and named persistent layers."),
+		stencil.WithName(slate.AppName),
+		stencil.WithDescription(rootSummary),
 		stencil.WithVersionInfo(stencil.VersionInfo{
 			Version:    appVersion,
 			BuildDate:  appBuildDate,
 			CommitHash: appCommitHash,
 			Branch:     appBranch,
 		}),
-		stencil.WithRootCommand(root),
+		stencil.WithRootCommand(newRootCmd()),
 	)
 	os.Exit(app.Execute(os.Args[1:]))
+}
+
+// newRootCmd is separate from main so tests can walk and drive the command
+// tree without a subprocess.
+func newRootCmd() *stencil.Command {
+	root := &stencil.Command{
+		Name:            slate.AppName,
+		Summary:         rootSummary,
+		Long:            rootLong,
+		PersistentFlags: stencil.NewFlagSet(),
+		Flags:           stencil.NewFlagSet(),
+	}
+	root.PersistentFlags.Bool("quiet", "q", "Print only errors and results", false)
+
+	root.Sub = []*stencil.Command{
+		newStatusCmd(),
+		newListCmd(),
+		newCheckpointCmd(),
+		newHistoryCmd(),
+		newRollbackCmd(),
+		newForkCmd(),
+		newSwitchCmd(),
+		newResetCmd(),
+		newDiscardCmd(),
+		newBuildCmd(),
+		newInstallCmd(),
+	}
+	return root
 }

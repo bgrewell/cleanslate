@@ -1,18 +1,20 @@
-package state
+package slate
 
 import (
 	"bufio"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
 
-// Subvolume is the subset of btrfs subvolume metadata testbox cares about.
+// Subvolume is the subset of btrfs subvolume metadata cleanslate cares about.
 type Subvolume struct {
 	ID         uint64
-	Path       string // path within the filesystem, e.g. "@base"
+	Path       string // path within the filesystem, e.g. "@baseline"
 	UUID       string
 	ParentUUID string // empty if not a snapshot
 	Generation uint64
@@ -23,7 +25,7 @@ type Subvolume struct {
 //
 // Output format (btrfs-progs 6.x):
 //
-//	ID 256 gen 18 top level 5 parent_uuid - uuid abc-... path @base
+//	ID 256 gen 18 top level 5 parent_uuid - uuid abc-... path @baseline
 func btrfsListSubvolumes(fsRoot string) ([]Subvolume, error) {
 	out, err := exec.Command("btrfs", "subvolume", "list", "-u", "-q", "-g", fsRoot).Output()
 	if err != nil {
@@ -82,4 +84,52 @@ func btrfsDelete(path string) error {
 		return fmt.Errorf("btrfs subvolume delete %s: %w (%s)", path, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// btrfsSnapshotRO creates a read-only snapshot of src at dst. Checkpoints are
+// created read-only rather than sealed afterwards so there is no window in
+// which one is writable.
+func btrfsSnapshotRO(src, dst string) error {
+	out, err := exec.Command("btrfs", "subvolume", "snapshot", "-r", src, dst).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("btrfs subvolume snapshot -r %s %s: %w (%s)", src, dst, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// btrfsDeleteRecursive removes a subvolume and any subvolumes nested inside it.
+// Plain deletion fails with ENOTEMPTY on nested subvolumes, which is what a
+// container runtime using the btrfs storage driver leaves behind.
+func btrfsDeleteRecursive(path string) error {
+	out, err := exec.Command("btrfs", "subvolume", "delete", "-R", path).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	// btrfs-progs without -R: enumerate nested subvolumes and remove the
+	// deepest first, then retry the parent.
+	if nested, lErr := nestedSubvolumes(path); lErr == nil {
+		for _, n := range nested {
+			_ = btrfsDelete(filepath.Join(filepath.Dir(path), n))
+		}
+		if err2 := btrfsDelete(path); err2 == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("btrfs subvolume delete -R %s: %w (%s)", path, err, strings.TrimSpace(string(out)))
+}
+
+// nestedSubvolumes lists subvolumes below path, deepest first.
+func nestedSubvolumes(path string) ([]string, error) {
+	out, err := exec.Command("btrfs", "subvolume", "list", "-o", path).Output()
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if i := strings.Index(line, " path "); i >= 0 {
+			paths = append(paths, strings.TrimSpace(line[i+6:]))
+		}
+	}
+	sort.Slice(paths, func(i, j int) bool { return len(paths[i]) > len(paths[j]) })
+	return paths, nil
 }

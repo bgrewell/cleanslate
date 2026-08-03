@@ -15,3 +15,5 @@ mkosi.local.conf
 *.test
 *.out
 vendor/
+mkosi.tools/
+mkosi.tools.manifest

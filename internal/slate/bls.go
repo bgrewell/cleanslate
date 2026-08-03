@@ -1,41 +1,32 @@
-package state
+package slate
 
 import (
 	"bufio"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
 // BLS (Boot Loader Specification) entries live at <ESP>/loader/entries/*.conf
-// and are read directly by systemd-boot. testbox owns entries named
-// testbox-<state>.conf — testbox-fresh and testbox-base are written at build
-// time by scripts/relayout.sh; testbox-<name> per named state is written
-// here when `testbox state save` runs.
+// and are read directly by systemd-boot. cleanslate owns entries named
+// cleanslate-<name>.conf. The entries for the default slate, scratch, and
+// rescue are written at build time by scripts/relayout.sh; one entry per
+// additional slate is written here.
 //
-// We never edit files we don't own; entries written by the rootfs's normal
-// kernel-package postinst (e.g. testbox-6.8.0-111-generic.conf) are left
-// alone.
+// Entries this tool does not own — those written by the rootfs's kernel-package
+// postinst, e.g. cleanslate-6.8.0-111-generic.conf — are never edited.
 
-// DefaultESPPath returns the conventional ESP mount path on Ubuntu/Debian.
-// Callers may override via the --esp CLI flag.
-const DefaultESPPath = "/boot"
-
-// blsTemplate is the testbox-fresh.conf path used as a template for new
-// entries. We copy it verbatim and rewrite the rootflags=subvol= portion.
+// blsTemplate is the entry cloned as the basis for new ones. It is written at
+// build time and is the only place the build-time facts — kernel version,
+// initrd path, root=PARTUUID, console arguments — are recorded, none of which
+// can be rederived reliably at runtime.
 func blsTemplate(esp string) string {
-	return filepath.Join(esp, "loader", "entries", "testbox-fresh.conf")
+	return EntryPath(esp, TemplateEntry)
 }
 
-// blsEntryPath returns <esp>/loader/entries/testbox-<name>.conf.
-func blsEntryPath(esp, name string) string {
-	return filepath.Join(esp, "loader", "entries", "testbox-"+name+".conf")
-}
-
-// WriteBLSEntry creates a BLS entry for the named state by cloning the
-// testbox-fresh.conf template and rewriting the rootflags=subvol= flag plus
-// the title. The state's on-disk subvolume is "@"+name.
+// WriteBLSEntry creates a BLS entry for the named slate by cloning the
+// template entry and rewriting the rootflags=subvol= flag plus the title. The
+// slate's on-disk subvolume is "@"+name.
 func WriteBLSEntry(esp, name string) error {
 	src, err := os.ReadFile(blsTemplate(esp))
 	if err != nil {
@@ -45,7 +36,7 @@ func WriteBLSEntry(esp, name string) error {
 	subvol := "@" + name
 	out := rewriteBLSEntry(string(src), name, subvol)
 
-	dst := blsEntryPath(esp, name)
+	dst := EntryPath(esp, name)
 	if err := os.WriteFile(dst, []byte(out), 0644); err != nil {
 		return fmt.Errorf("write BLS entry %s: %w", dst, err)
 	}
@@ -55,7 +46,7 @@ func WriteBLSEntry(esp, name string) error {
 // DeleteBLSEntry removes the BLS entry for the named state. Missing entry
 // is not an error.
 func DeleteBLSEntry(esp, name string) error {
-	if err := os.Remove(blsEntryPath(esp, name)); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(EntryPath(esp, name)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("delete BLS entry: %w", err)
 	}
 	return nil
@@ -70,7 +61,7 @@ func rewriteBLSEntry(input, name, subvol string) string {
 		line := scanner.Text()
 		switch {
 		case strings.HasPrefix(strings.TrimLeft(line, " \t"), "title"):
-			lines = append(lines, "title    testbox: "+name)
+			lines = append(lines, "title    cleanslate: "+name)
 		case strings.HasPrefix(strings.TrimLeft(line, " \t"), "options"):
 			lines = append(lines, rewriteOptionsLine(line, subvol))
 		default:
@@ -111,7 +102,7 @@ func rewriteOptionsLine(line, subvol string) string {
 // replaceSubvolToken replaces the subvol= component inside a rootflags= field
 // while leaving other rootflags components alone. e.g.
 //
-//	rootflags=compress=zstd,subvol=@runtime  →  rootflags=compress=zstd,subvol=@base
+//	rootflags=compress=zstd,subvol=@runtime  →  rootflags=compress=zstd,subvol=@baseline
 func replaceSubvolToken(rootflags, subvol string) string {
 	body := strings.TrimPrefix(rootflags, "rootflags=")
 	parts := strings.Split(body, ",")

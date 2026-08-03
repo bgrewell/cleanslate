@@ -1,7 +1,7 @@
 #!/bin/sh
-# testbox-generate-host-keys — idempotently generate SSH host keys at
+# cleanslate-generate-host-keys — idempotently generate SSH host keys at
 # /etc/ssh/host_keys/. Safe to run on every boot; only generates keys that
-# are missing. Called by testbox-host-keys.service before sshd starts.
+# are missing. Called by cleanslate-host-keys.service before sshd starts.
 
 set -e
 
