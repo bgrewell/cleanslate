@@ -91,19 +91,40 @@ func displayName(subvol string) string {
 
 var validNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
+// reservedNames cannot be used for a slate. "scratch", "rescue", and
+// "baseline" name boot modes rather than slates; a slate answering to one of
+// them would make the boot menu ambiguous.
+var reservedNames = map[string]bool{
+	"baseline": true,
+	"scratch":  true,
+	"rescue":   true,
+	"runtime":  true,
+	"hostid":   true,
+}
+
+// validateName rejects names that are unusable as a subvolume, as a boot-entry
+// filename, or as a word in the boot menu. Names reach both paths and
+// filenames, so this is a safety boundary and not only a courtesy: a name
+// containing a slash or a leading dot could escape the entries directory.
+func validateName(name string) error {
+	switch {
+	case name == "":
+		return fmt.Errorf("a slate name is required")
+	case !validNamePattern.MatchString(name):
+		return fmt.Errorf("invalid slate name %q: use letters, digits, '-' and '_'", name)
+	case reservedNames[name] || reservedSubvols["@"+name]:
+		return fmt.Errorf("%q is reserved", name)
+	}
+	return nil
+}
+
 // Save snapshots source into a new named state. Source may be the user-
 // facing name of an existing slate ("scratch", "baseline", "pg-tuned") or "current"
 // to use the running active subvolume. Reserved names cannot be used as the
 // destination.
 func Save(fs *FsRoot, name, source string) error {
-	if name == "" {
-		return fmt.Errorf("state name is required")
-	}
-	if !validNamePattern.MatchString(name) {
-		return fmt.Errorf("invalid state name %q: only letters, digits, '-', and '_' are allowed", name)
-	}
-	if reservedSubvols["@"+name] || name == "baseline" || name == "scratch" {
-		return fmt.Errorf("name %q is reserved", name)
+	if err := validateName(name); err != nil {
+		return err
 	}
 
 	srcSubvol, err := resolveSource(fs, source)
@@ -114,7 +135,7 @@ func Save(fs *FsRoot, name, source string) error {
 	dstPath := filepath.Join(fs.Path, "@"+name)
 
 	if _, err := os.Stat(dstPath); err == nil {
-		return fmt.Errorf("state %q already exists", name)
+		return fmt.Errorf("a slate named %q already exists", name)
 	}
 
 	return btrfsSnapshot(srcPath, dstPath)

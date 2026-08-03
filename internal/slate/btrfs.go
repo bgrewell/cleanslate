@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -82,4 +84,52 @@ func btrfsDelete(path string) error {
 		return fmt.Errorf("btrfs subvolume delete %s: %w (%s)", path, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// btrfsSnapshotRO creates a read-only snapshot of src at dst. Checkpoints are
+// created read-only rather than sealed afterwards so there is no window in
+// which one is writable.
+func btrfsSnapshotRO(src, dst string) error {
+	out, err := exec.Command("btrfs", "subvolume", "snapshot", "-r", src, dst).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("btrfs subvolume snapshot -r %s %s: %w (%s)", src, dst, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// btrfsDeleteRecursive removes a subvolume and any subvolumes nested inside it.
+// Plain deletion fails with ENOTEMPTY on nested subvolumes, which is what a
+// container runtime using the btrfs storage driver leaves behind.
+func btrfsDeleteRecursive(path string) error {
+	out, err := exec.Command("btrfs", "subvolume", "delete", "-R", path).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	// btrfs-progs without -R: enumerate nested subvolumes and remove the
+	// deepest first, then retry the parent.
+	if nested, lErr := nestedSubvolumes(path); lErr == nil {
+		for _, n := range nested {
+			_ = btrfsDelete(filepath.Join(filepath.Dir(path), n))
+		}
+		if err2 := btrfsDelete(path); err2 == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("btrfs subvolume delete -R %s: %w (%s)", path, err, strings.TrimSpace(string(out)))
+}
+
+// nestedSubvolumes lists subvolumes below path, deepest first.
+func nestedSubvolumes(path string) ([]string, error) {
+	out, err := exec.Command("btrfs", "subvolume", "list", "-o", path).Output()
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if i := strings.Index(line, " path "); i >= 0 {
+			paths = append(paths, strings.TrimSpace(line[i+6:]))
+		}
+	}
+	sort.Slice(paths, func(i, j int) bool { return len(paths[i]) > len(paths[j]) })
+	return paths, nil
 }
