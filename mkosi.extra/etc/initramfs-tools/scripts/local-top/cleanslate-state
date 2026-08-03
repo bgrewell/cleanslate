@@ -234,6 +234,22 @@ retain_auto() {
     if [ -n "$_n" ]; then echo "$_n"; else echo "$RETAIN_AUTO_DEFAULT"; fi
 }
 
+# Machines whose whole purpose is a stateful workload can turn the per-boot
+# checkpoint off. Measured: a snapshot forces a copy on the first write to each
+# block even for nodatacow files, which leaves a random-rewrite workload at
+# plain copy-on-write speed and permanently fragmented — so on such a machine
+# `chattr +C` buys nothing while checkpoints are being taken.
+#
+# The cost is the per-boot rollback point, which is the model's main safety
+# property, so this is opt-in and reported by `cleanslate status`.
+auto_checkpoint_enabled() {
+    _v=$(sed -n 's/^auto_checkpoint=//p' "$mnt/.cleanslate/config" 2>/dev/null | tail -1)
+    case $_v in
+        off|no|false|0) return 1 ;;
+        *)              return 0 ;;
+    esac
+}
+
 next_seq() {
     _last=$(ls -d "$mnt/$1".ckpt.* 2>/dev/null \
         | sed 's/.*\.ckpt\.\([0-9]*\)\..*/\1/' | sort -n | tail -1)
@@ -388,10 +404,16 @@ else
     ensure_slate "$subvol"
     apply_pending "$subvol"
 
-    log_begin_msg "cleanslate: checkpointing $(display_name "$subvol") before boot"
-    ckpt=$(checkpoint_slate "$subvol")
-    prune_auto "$subvol"
-    log_end_msg
+    ckpt=
+    if auto_checkpoint_enabled; then
+        log_begin_msg "cleanslate: checkpointing $(display_name "$subvol") before boot"
+        ckpt=$(checkpoint_slate "$subvol")
+        prune_auto "$subvol"
+        log_end_msg
+    else
+        log_warning_msg "cleanslate: automatic checkpoints are off; this boot leaves no rollback point"
+        ckpt=disabled
+    fi
 
     write_facts "$(display_name "$subvol")" persistent "$subvol" "$ckpt" "$subvol"
 fi

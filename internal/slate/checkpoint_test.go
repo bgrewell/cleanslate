@@ -143,3 +143,44 @@ func TestPendingFileIsShellParseable(t *testing.T) {
 		t.Errorf("staged file is %q, want %q", data, want)
 	}
 }
+
+func TestAutoCheckpointDefaultsOn(t *testing.T) {
+	if !AutoCheckpointEnabled(FsRootAt(t.TempDir())) {
+		t.Error("automatic checkpoints should be on when nothing says otherwise")
+	}
+}
+
+func TestAutoCheckpointOptOut(t *testing.T) {
+	// The hook parses the same file with sed, so the accepted spellings have to
+	// agree between the two readers.
+	for _, val := range []string{"off", "no", "false", "0"} {
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, MetaDir), 0755); err != nil {
+			t.Fatal(err)
+		}
+		body := "retain_auto=5\nauto_checkpoint=" + val + "\n"
+		if err := os.WriteFile(filepath.Join(dir, MetaDir, "config"), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+		fs := FsRootAt(dir)
+		if AutoCheckpointEnabled(fs) {
+			t.Errorf("auto_checkpoint=%s should disable automatic checkpoints", val)
+		}
+		if got := RetainAuto(fs); got != 5 {
+			t.Errorf("retain_auto should still parse alongside it, got %d", got)
+		}
+	}
+}
+
+func TestAutoCheckpointOnForOtherValues(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, MetaDir), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, MetaDir, "config"), []byte("auto_checkpoint=on\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if !AutoCheckpointEnabled(FsRootAt(dir)) {
+		t.Error("auto_checkpoint=on should leave checkpoints enabled")
+	}
+}

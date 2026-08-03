@@ -35,7 +35,10 @@ func printStatus(w io.Writer, b slate.Booted, pending *slate.Pending, nested []s
 		fmt.Fprintf(tw, "booted\t%s (%s ago)\n",
 			b.BootedAt.Format("2006-01-02 15:04 UTC"), humanDuration(time.Since(b.BootedAt)))
 	}
-	if b.Checkpoint != "" {
+	switch {
+	case b.AutoCheckpointOff():
+		fmt.Fprintf(tw, "checkpoint\tnone — automatic checkpoints are off on this machine\n")
+	case b.Checkpoint != "":
 		fmt.Fprintf(tw, "checkpoint\ttaken at boot\n")
 	}
 	if err := tw.Flush(); err != nil {
@@ -51,6 +54,10 @@ func printStatus(w io.Writer, b slate.Booted, pending *slate.Pending, nested []s
 	}
 	if b.FromCmdline {
 		fmt.Fprintf(w, "\nRead from the kernel command line; this machine may predate the boot record.\n")
+	}
+	if b.AutoCheckpointOff() {
+		fmt.Fprintf(w, "\nThis boot left no rollback point. Take one deliberately with\n"+
+			"`cleanslate checkpoint -m \"...\"` at a moment worth returning to.\n")
 	}
 	if len(nested) > 0 {
 		// Stated on every status because the consequence only shows up at

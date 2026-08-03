@@ -187,6 +187,60 @@ half-capture. That is also the likely recommendation for CoW-hostile workloads
 generally — see the issue tracker on `nodatacow` interacting with per-boot
 checkpoints.
 
+## Copy-on-write and stateful workloads
+
+The whole root is btrfs, so everything on a slate writes to a copy-on-write
+filesystem. The standard mitigation for random-rewrite workloads is `chattr +C`
+(nodatacow) on the data directory. **On a checkpointed slate that mitigation
+does not work**, and the numbers are worth stating because the intuition is
+wrong.
+
+Measured with `test/cowbench.py` — 512 MiB file, 20 000 random 4 KiB writes,
+fsync every 100:
+
+| case | throughput | vs nodatacow | extents |
+|---|---|---|---|
+| default CoW | 17 770 w/s | 25 % | 34 422 |
+| `chattr +C` | 71 681 w/s | 100 % | 2 |
+| `chattr +C`, one checkpoint taken | 19 927 w/s | 28 % | 34 421 |
+| same file, next pass | 55 044 w/s | 77 % | 34 421 |
+
+nodatacow is worth roughly 4× and keeps the file at 2 extents. A snapshot
+forces a copy on the first write to each block regardless, which takes back
+almost all of it — and fragmentation never recovers, because nodatacow cannot
+restore contiguity once the copy has happened.
+
+Across consecutive boots, each taking a checkpoint, the workload does not
+recover: it settles at 24–29 % of unsnapshotted nodatacow, which is
+indistinguishable from plain CoW at 25 %, and stays there.
+
+Two consequences:
+
+1. **Data that is CoW-hostile, or that must survive a rollback, belongs on a
+   filesystem cleanslate does not checkpoint** — a separate disk or partition.
+   This is the same answer as the nested-subvolume problem above, from the
+   other direction: a nested subvolume is silently omitted from checkpoints,
+   and a separate filesystem is neither checkpointed nor half-captured.
+2. **Benchmarks are affected.** A database benchmarked on a checkpointed slate
+   runs at CoW speed, so a comparison against non-cleanslate hardware measures
+   the substrate as much as the workload.
+
+### Turning automatic checkpoints off
+
+For a machine whose whole purpose is a stateful workload, `auto_checkpoint=off`
+in `<fsroot>/.cleanslate/config` stops the per-boot checkpoint. Accepted as
+`off`, `no`, `false`, or `0`; anything else, including the file being absent,
+leaves it on.
+
+This is off by default and deliberately awkward to reach, because it trades
+away the model's main safety property: a machine with it set leaves no rollback
+point at any boot, and manual checkpoints become the only way back.
+`cleanslate status` says so on every invocation while it is set.
+
+Note that `retain_auto` is a different setting — it bounds how many automatic
+checkpoints are kept, and setting it to zero does not avoid the CoW penalty,
+because the snapshot is still taken before it is pruned.
+
 ## Known gaps
 
 - `/etc/ssh/host_keys` is a mount point over `@hostid`, so checkpoints contain
