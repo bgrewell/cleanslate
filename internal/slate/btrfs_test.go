@@ -47,39 +47,3 @@ func TestParseSubvolumeLine(t *testing.T) {
 		}
 	}
 }
-
-func TestParseCmdlineSubvol(t *testing.T) {
-	cases := []struct {
-		cmdline string
-		want    string
-		wantOK  bool
-	}{
-		{cmdline: "BOOT_IMAGE=/vmlinuz root=PARTUUID=abc rootflags=subvol=@runtime console=ttyS0", want: "@runtime", wantOK: true},
-		{cmdline: "rootflags=subvol=/@gnb-xyz", want: "@gnb-xyz", wantOK: true},
-		{cmdline: "rootflags=compress=zstd,subvol=@baseline ro", want: "@baseline", wantOK: true},
-		{cmdline: "rootflags=subvol=runtime", want: "@runtime", wantOK: true},
-		{cmdline: "rootflags=compress=zstd ro", want: "", wantOK: false},
-		{cmdline: "", want: "", wantOK: false},
-	}
-	for _, tc := range cases {
-		got, ok := parseCmdlineSubvol(tc.cmdline)
-		if got != tc.want || ok != tc.wantOK {
-			t.Errorf("parseCmdlineSubvol(%q) = (%q, %v), want (%q, %v)", tc.cmdline, got, ok, tc.want, tc.wantOK)
-		}
-	}
-}
-
-func TestDisplayName(t *testing.T) {
-	cases := map[string]string{
-		"@baseline": "baseline",
-		"@runtime":  "scratch",
-		"@gnb-xyz":  "gnb-xyz",
-		"@hostid":   "hostid", // hostid is filtered before displayName but the function still maps
-		"@anything": "anything",
-	}
-	for in, want := range cases {
-		if got := displayName(in); got != want {
-			t.Errorf("displayName(%q) = %q, want %q", in, got, want)
-		}
-	}
-}

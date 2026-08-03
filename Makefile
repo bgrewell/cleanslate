@@ -17,13 +17,27 @@ LDFLAGS := -X 'main.appVersion=$(VERSION)' \
            -X 'main.appCommitHash=$(COMMIT_HASH)' \
            -X 'main.appBranch=$(BRANCH)'
 
-.PHONY: all build clean major minor patch
+.PHONY: all build check test vet fmt clean major minor patch
 
 all: build
 
 build:
 	@mkdir -p $(BIN_DIR)
 	go build -ldflags="$(LDFLAGS)" -o $(BINARY) ./cmd/cli
+
+# The package list is explicit rather than ./...: a completed image build
+# leaves root-owned mkosi.cache/ and mkosi.tools/ trees in the working
+# directory that the Go tool cannot walk.
+check: fmt vet test
+
+test:
+	go test ./cmd/... ./internal/...
+
+vet:
+	go vet ./cmd/... ./internal/...
+
+fmt:
+	gofmt -l -w ./cmd ./internal
 
 clean:
 	rm -rf $(BIN_DIR)

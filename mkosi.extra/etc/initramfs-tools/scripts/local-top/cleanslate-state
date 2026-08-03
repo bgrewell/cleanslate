@@ -260,6 +260,70 @@ prune_auto() {
 }
 
 # ---------------------------------------------------------------------------
+# Staged replacements (rollback, reset)
+#
+# A slate is the mounted root while it runs, so it cannot be replaced from the
+# running system. `cleanslate rollback` and `cleanslate reset` stage the
+# replacement and it is applied here, where nothing holds the subvolume open.
+#
+# The state being replaced is checkpointed as a kept checkpoint first, so a
+# rollback can itself be rolled back. The staged file is removed before the
+# replacement begins: a crash mid-way leaves the slate missing, which the
+# ensure_slate path recreates from the baseline, whereas leaving the file in
+# place would retry a failing replacement on every boot.
+# ---------------------------------------------------------------------------
+
+apply_pending() {
+    _target=$1
+    _file="$mnt/.cleanslate/pending"
+    [ -f "$_file" ] || return 0
+
+    _slate=$(sed -n 's/^slate=//p' "$_file" | tail -1)
+    _source=$(sed -n 's/^source=//p' "$_file" | tail -1)
+    _reason=$(sed -n 's/^reason=//p' "$_file" | tail -1)
+
+    # Only act when the staged slate is the one being booted; anything else
+    # waits until that slate is next booted.
+    [ "$_slate" = "$_target" ] || return 0
+
+    if ! valid_subvol "$_slate" || ! valid_subvol "$_source"; then
+        log_warning_msg "cleanslate: ignoring malformed staged replacement"
+        rm -f "$_file"
+        return 0
+    fi
+    if [ ! -d "$mnt/$_source" ]; then
+        log_warning_msg "cleanslate: staged source $_source no longer exists; skipping"
+        rm -f "$_file"
+        return 0
+    fi
+
+    log_begin_msg "cleanslate: applying ${_reason:-staged replacement} to $(display_name "$_slate")"
+
+    _pre="$_slate.ckpt.$(next_seq "$_slate").keep"
+    if ! btrfs subvolume snapshot -r "$mnt/$_slate" "$mnt/$_pre" >/dev/null 2>&1; then
+        log_warning_msg "cleanslate: could not checkpoint before replacing; aborting"
+        rm -f "$_file"
+        log_end_msg
+        return 0
+    fi
+
+    rm -f "$_file"
+
+    if ! delete_subvol "$mnt/$_slate"; then
+        log_failure_msg "cleanslate: failed to remove $_slate while replacing it"
+        cleanup
+        panic "cleanslate cannot complete the staged replacement"
+    fi
+    if ! btrfs subvolume snapshot "$mnt/$_source" "$mnt/$_slate" >/dev/null; then
+        log_failure_msg "cleanslate: failed to create $_slate from $_source"
+        cleanup
+        panic "cleanslate cannot complete the staged replacement"
+    fi
+
+    log_end_msg
+}
+
+# ---------------------------------------------------------------------------
 # Prepare
 # ---------------------------------------------------------------------------
 
@@ -304,6 +368,7 @@ else
     fi
 
     ensure_slate "$subvol"
+    apply_pending "$subvol"
 
     log_begin_msg "cleanslate: checkpointing $(display_name "$subvol") before boot"
     ckpt=$(checkpoint_slate "$subvol")
