@@ -127,9 +127,18 @@ func FindCheckpoint(fs *FsRoot, ref, defaultSlate string) (Checkpoint, error) {
 // CreateCheckpoint snapshots a slate read-only. An empty message produces an
 // automatic checkpoint, which is eligible for pruning; any message makes it a
 // kept one, which is not.
-func CreateCheckpoint(fs *FsRoot, slateName, message string) (Checkpoint, error) {
+//
+// allowIncomplete permits a checkpoint of a slate containing nested
+// subvolumes, whose contents a snapshot cannot capture. It defaults off so the
+// loss has to be accepted explicitly rather than discovered at rollback.
+func CreateCheckpoint(fs *FsRoot, slateName, message string, allowIncomplete bool) (Checkpoint, error) {
 	if err := validateName(slateName); err != nil {
 		return Checkpoint{}, err
+	}
+	if !allowIncomplete {
+		if err := CheckCapturable(fs, slateName); err != nil {
+			return Checkpoint{}, err
+		}
 	}
 	subvol := "@" + slateName
 	if _, err := os.Stat(filepath.Join(fs.Path, subvol)); err != nil {

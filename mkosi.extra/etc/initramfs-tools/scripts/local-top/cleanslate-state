@@ -243,6 +243,17 @@ next_seq() {
 
 checkpoint_slate() {
     _slate=$1
+
+    # A snapshot does not descend into nested subvolumes: they land in the
+    # checkpoint as empty directories. Rolling back to it would silently
+    # discard whatever was inside. Reported rather than refused — a slate that
+    # cannot be checkpointed completely is still better off with an
+    # incomplete rollback point than with none.
+    _nested=$(btrfs subvolume list -o "$mnt/$_slate" 2>/dev/null | wc -l)
+    if [ "${_nested:-0}" -gt 0 ]; then
+        log_warning_msg "cleanslate: $_nested nested filesystem(s) under $_slate are not captured by checkpoints"
+    fi
+
     _ckpt="$_slate.ckpt.$(next_seq "$_slate").auto"
     if btrfs subvolume snapshot -r "$mnt/$_slate" "$mnt/$_ckpt" >/dev/null 2>&1; then
         echo "$_ckpt"

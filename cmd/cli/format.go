@@ -13,7 +13,7 @@ import (
 // on directly. The wording here is the whole user-facing surface of the tool,
 // and golden tests over it are what stop it drifting back into mechanism.
 
-func printStatus(w io.Writer, b slate.Booted, pending *slate.Pending) error {
+func printStatus(w io.Writer, b slate.Booted, pending *slate.Pending, nested []string) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 
 	fmt.Fprintf(tw, "slate\t%s\n", b.Name)
@@ -52,10 +52,19 @@ func printStatus(w io.Writer, b slate.Booted, pending *slate.Pending) error {
 	if b.FromCmdline {
 		fmt.Fprintf(w, "\nRead from the kernel command line; this machine may predate the boot record.\n")
 	}
+	if len(nested) > 0 {
+		// Stated on every status because the consequence only shows up at
+		// rollback, by which point the data is already gone.
+		fmt.Fprintf(w, "\nWarning: %d nested filesystem(s) here are not captured by checkpoints\n"+
+			"and would be empty after a rollback:\n", len(nested))
+		for _, p := range nested {
+			fmt.Fprintf(w, "  %s\n", p)
+		}
+	}
 	return nil
 }
 
-func printSlates(w io.Writer, slates []slate.Slate, checkpoints []slate.Checkpoint, booted slate.Booted) error {
+func printSlates(w io.Writer, slates []slate.Slate, checkpoints []slate.Checkpoint, booted slate.Booted, incomplete map[string]int) error {
 	if len(slates) == 0 {
 		fmt.Fprintln(w, "no slates")
 		return nil
@@ -84,6 +93,11 @@ func printSlates(w io.Writer, slates []slate.Slate, checkpoints []slate.Checkpoi
 		count := "—"
 		if n := counts[s.Name]; n > 0 {
 			count = fmt.Sprintf("%d", n)
+		}
+		if n := incomplete[s.Name]; n > 0 {
+			// Flagged in the listing as well as in status: someone choosing
+			// which slate to trust should see it without having to boot it.
+			count = fmt.Sprintf("%s (%d uncaptured)", count, n)
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", s.Name, from, count, marker)
 	}

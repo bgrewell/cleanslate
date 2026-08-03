@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -51,7 +52,7 @@ func newStatusCmd() *stencil.Command {
 			if err != nil {
 				return fmt.Errorf("this does not look like a cleanslate machine: %w", err)
 			}
-			return printStatus(os.Stdout, b, pendingFor(ctx, b))
+			return printStatus(os.Stdout, b, pendingFor(ctx, b), nestedFor(ctx, b))
 		},
 	}
 	fsRootFlag(cmd.Flags)
@@ -71,6 +72,24 @@ func pendingFor(ctx *stencil.Context, b slate.Booted) *slate.Pending {
 		return &p
 	}
 	return nil
+}
+
+// nestedFor reports data a checkpoint of the running slate would not capture.
+// status must work unprivileged, so being unable to look is not an error here.
+func nestedFor(ctx *stencil.Context, b slate.Booted) []string {
+	if b.Mode != slate.ModePersistent {
+		return nil
+	}
+	fs, err := openFsRoot(ctx)
+	if err != nil {
+		return nil
+	}
+	defer fs.Close()
+	nested, err := slate.NestedIn(fs, b.Name)
+	if err != nil {
+		return nil
+	}
+	return nested
 }
 
 func newListCmd() *stencil.Command {
@@ -96,7 +115,13 @@ func newListCmd() *stencil.Command {
 				return err
 			}
 			booted, _ := slate.ReadBooted()
-			return printSlates(os.Stdout, slates, checkpoints, booted)
+			incomplete := map[string]int{}
+			for _, sl := range slates {
+				if n, err := slate.NestedIn(fs, sl.Name); err == nil && len(n) > 0 {
+					incomplete[sl.Name] = len(n)
+				}
+			}
+			return printSlates(os.Stdout, slates, checkpoints, booted, incomplete)
 		},
 	}
 	fsRootFlag(cmd.Flags)
@@ -131,8 +156,12 @@ func newCheckpointCmd() *stencil.Command {
 			if message == "" {
 				message = "kept"
 			}
-			c, err := slate.CreateCheckpoint(fs, b.Name, message)
+			c, err := slate.CreateCheckpoint(fs, b.Name, message, ctx.Flags.Bool("allow-incomplete"))
 			if err != nil {
+				var nested *slate.NestedError
+				if errors.As(err, &nested) {
+					return fmt.Errorf("%w\n\nCheckpoint anyway with --allow-incomplete.", err)
+				}
 				return err
 			}
 			fmt.Printf("checkpoint %s on %s\n", c.Ref(), c.Slate)
@@ -140,6 +169,7 @@ func newCheckpointCmd() *stencil.Command {
 		},
 	}
 	cmd.Flags.String("message", "m", "What this checkpoint is, so it means something later", "")
+	cmd.Flags.Bool("allow-incomplete", "", "Checkpoint even though nested filesystems cannot be captured", false)
 	fsRootFlag(cmd.Flags)
 	return cmd
 }
